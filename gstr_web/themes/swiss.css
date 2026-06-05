@@ -1,0 +1,15 @@
+@import url('../fonts/swiss-fonts.css');  /* vendored locally — default theme is fully offline */
+/* 01 · Swiss Signal — strict grid, signal red, exact */
+:root{
+  --bg:#f4f4f1; --panel:#fff; --panel-2:#fbfbf8; --ink:#0c0c0c; --ink-soft:#5b5b55; --ink-faint:#8c8c84;
+  --accent:#e2231a; --accent-ink:#fff; --rule:#d3d3cc; --rule-soft:#e6e6df;
+  --radius:0px; --radius-btn:0px; --radius-card:0px; --border-w:1.5px; --sel-bg:#fff;
+  --font-display:'Archivo',sans-serif; --font-body:'Archivo',sans-serif; --font-mono:'IBM Plex Mono',monospace;
+  --title-size:54px; --title-weight:800; --title-ls:-.03em;
+}
+.mast{border-top:3px solid #1a1a1a;padding-top:14px}
+.eyebrow{font-weight:600}
+.sec-kicker::before{content:counter(sec,decimal-leading-zero) "  "}
+.mode.sel::after{content:"";position:absolute;top:16px;right:16px;width:9px;height:9px;background:var(--accent)}
+.dl a{background:#0c0c0c;color:#fff}
+.foot{border-top:3px solid #1a1a1a}

@@ -1,0 +1,27 @@
+# ── Python ──
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.parse_cache.pkl
+
+# ── Desktop build artifacts (huge: PyInstaller exe + build tree) ──
+gstr_analyser_src/dist/
+gstr_analyser_src/build/
+*.exe
+
+# ── Dev tooling / scratch (not part of the shipped app) ──
+pyodide_spike/
+graphify-out/
+.claude/
+
+# ── Generated report output ──
+*_Verified_Reports/
+
+# ── OS / editor cruft ──
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# ── Scratch screenshots at repo root ──
+/*.png

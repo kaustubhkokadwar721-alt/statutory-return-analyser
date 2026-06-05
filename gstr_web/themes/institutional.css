@@ -1,0 +1,25 @@
+@import url('../fonts/institutional-fonts.css');
+/* 07 · Institutional Seal — ivory + indigo, saffron, stately (centered) */
+:root{
+  --bg:#f6f1e6; --panel:#fdfaf2; --panel-2:#fdfaf2; --ink:#221d16; --ink-soft:#736a58; --ink-faint:#9a8f78;
+  --accent:#1f2c52; --accent-2:#c47e23; --accent-ink:#fdfaf2; --rule:#d9cfba; --rule-soft:#e6ddc9;
+  --radius:0px; --radius-btn:0px; --radius-card:0px; --border-w:1px; --sel-bg:#fff;
+  --font-display:'Marcellus',serif; --font-body:'Spectral',serif; --font-mono:'Hanken Grotesk',sans-serif;
+  --title-size:50px; --title-weight:400; --title-ls:.01em; --kicker-color:#c47e23;
+}
+.mast{text-align:center;border-bottom:1px solid var(--rule);padding-bottom:22px}
+.eyebrow{color:#c47e23;letter-spacing:.3em}
+.title{color:var(--accent)}
+.lede{font-style:italic;margin-left:auto;margin-right:auto}
+.statusbar{justify-content:center}
+.sec-head{justify-content:center}
+.sec-head::before,.sec-head::after{content:"";flex:1;height:1px;background:var(--rule);align-self:center}
+.sec-kicker{color:#c47e23;letter-spacing:.22em}
+.sec-kicker::before{content:counter(sec,upper-roman) " · "}
+.mode{text-align:center}
+.mode.sel{box-shadow:0 0 0 1px var(--accent)}
+.mode.sel .mt{color:#c47e23}
+.dl a{background:transparent;border:1px solid var(--accent);color:var(--accent)}
+.dl a:hover{background:var(--accent);color:var(--accent-ink)}
+.foot{border-top:4px double var(--accent);justify-content:center;text-align:center;flex-direction:column;gap:12px}
+.seal{background:transparent;border:1px solid #c47e23;color:#c47e23;border-radius:30px;letter-spacing:.16em}

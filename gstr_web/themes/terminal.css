@@ -1,0 +1,21 @@
+@import url('../fonts/terminal-fonts.css');
+/* 06 · Audit Terminal — dark slate, amber, grid */
+:root{
+  --bg:#0c1116; --panel:#111922; --panel-2:#0f161d; --ink:#d6e2e0; --ink-soft:#8aa0ad; --ink-faint:#5f7585;
+  --accent:#e8a13a; --accent-ink:#1a1206; --green:#48c98a; --amber:#e8a13a;
+  --rule:rgba(214,226,224,.09); --rule-soft:rgba(214,226,224,.06);
+  --radius:0px; --radius-btn:0px; --radius-card:0px; --border-w:1px; --sel-bg:linear-gradient(180deg,rgba(232,161,58,.1),transparent);
+  --font-display:'Archivo',sans-serif; --font-body:'IBM Plex Mono',monospace; --font-mono:'IBM Plex Mono',monospace;
+  --title-size:44px; --title-weight:700; --title-ls:-.02em;
+  --bg-image:linear-gradient(rgba(214,226,224,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(214,226,224,.05) 1px,transparent 1px);
+}
+body{background-size:34px 34px}
+.title{color:#fff}
+.mt{color:#fff;font-family:var(--font-display)}
+.mode.sel{box-shadow:inset 0 0 0 1px rgba(232,161,58,.3)}
+.mode.sel .mt{color:var(--accent)}
+.dl .n{color:#fff;font-family:var(--font-display)}
+.dl a{background:transparent;border:1px solid var(--accent);color:var(--accent)}
+.seal{background:transparent;border:1px solid #9a6a22;color:var(--accent)}
+.foot{border-top:1px solid rgba(232,161,58,.25)}
+.dot.busy{box-shadow:0 0 8px var(--accent)}

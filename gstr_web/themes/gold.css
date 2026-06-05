@@ -1,0 +1,20 @@
+@import url('../fonts/gold-fonts.css');
+/* 02 · Quiet Gold — dark private bank */
+:root{
+  --bg:#0d0d0f; --panel:#16161c; --panel-2:#12121a; --ink:#ece6d8; --ink-soft:#8a8678; --ink-faint:#6f6a5c;
+  --accent:#caa45a; --accent-ink:#1a1408; --green:#7fae7a; --amber:#caa45a;
+  --rule:rgba(202,164,90,.24); --rule-soft:rgba(236,230,216,.08);
+  --radius:0px; --radius-btn:0px; --radius-card:0px; --border-w:1px; --sel-bg:rgba(202,164,90,.08);
+  --font-display:'Cormorant Garamond',serif; --font-body:'Jost',sans-serif; --font-mono:'IBM Plex Mono',monospace;
+  --title-size:62px; --title-weight:500; --title-ls:.004em;
+  --bg-image:radial-gradient(1100px 600px at 72% -10%,rgba(202,164,90,.07),transparent 60%);
+}
+body{font-weight:300}
+.title em{color:var(--accent);font-weight:400}
+.mt{font-weight:500}
+.btn{background:linear-gradient(180deg,var(--accent),#8a703a)}
+.dl a{background:transparent;border:1px solid var(--accent);color:var(--accent)}
+.dl a:hover{background:var(--accent);color:var(--accent-ink)}
+.seal{background:transparent;border:1px solid var(--rule);color:var(--accent);border-radius:30px;letter-spacing:.18em}
+.foot{border-top:1px solid var(--rule)}
+.lede{font-style:italic;font-family:var(--font-display);font-size:21px}

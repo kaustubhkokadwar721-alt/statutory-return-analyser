@@ -1,0 +1,19 @@
+@import url('../fonts/ledger-fonts.css');
+/* 03 · The Audit Ledger — FT financial press */
+:root{
+  --bg:#fbeee3; --panel:#fff7ef; --panel-2:#fffaf4; --ink:#1c140e; --ink-soft:#6f6256; --ink-faint:#9a8b7c;
+  --accent:#a8201a; --accent-ink:#fff7ef; --rule:#d8c4b2; --rule-soft:#e4d4c4;
+  --radius:0px; --radius-btn:0px; --radius-card:0px; --border-w:1px; --sel-bg:#fff;
+  --font-display:'Spectral',Georgia,serif; --font-body:'Spectral',Georgia,serif; --font-mono:'Saira Condensed',sans-serif;
+  --title-size:58px; --title-weight:700; --title-ls:-.02em; --kicker-ls:.16em;
+}
+.mast{border-bottom:3px double var(--ink);padding-bottom:14px}
+.eyebrow{font-weight:700;letter-spacing:.2em}
+.lede{font-style:italic;font-size:18px;border-left:3px solid var(--accent);padding-left:14px}
+.sec-kicker{font-weight:700}
+.sec-kicker::before{content:counter(sec,decimal-leading-zero) " — "}
+.mode.sel{box-shadow:inset 4px 0 0 var(--accent)}
+.md{font-style:italic}
+.dl a{background:var(--ink);color:var(--panel)}
+.seal{background:transparent;color:var(--accent);padding:0;font-weight:700;letter-spacing:.12em}
+.foot{border-top:3px double var(--ink)}

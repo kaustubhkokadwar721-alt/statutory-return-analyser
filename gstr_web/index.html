@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GSTR Return Analyser</title>
+<!-- Theme skin (swapped by the picker). Default applied inline before paint to avoid flash. -->
+<link id="themeCss" rel="stylesheet" href="themes/base.css">
+<link id="themeSkin" rel="stylesheet" href="themes/swiss.css">
+<script>
+  // Apply saved theme before first paint
+  (function(){
+    var t = localStorage.getItem('gstr-theme') || 'swiss';
+    document.documentElement.setAttribute('data-theme', t);
+    var l = document.getElementById('themeSkin');
+    if (l) l.href = 'themes/' + t + '.css';
+  })();
+</script>
+</head>
+<body>
+
+<!-- Theme picker — intentionally NOT themed (own neutral scope) -->
+<div class="theme-picker" id="themePicker">
+  <label for="themeSelect">Theme</label>
+  <select id="themeSelect">
+    <option value="swiss">01 · Swiss Signal</option>
+    <option value="gold">02 · Quiet Gold</option>
+    <option value="ledger">03 · Audit Ledger</option>
+    <option value="brutalist">04 · Engineered Brutalist</option>
+    <option value="neobank">05 · Sage Neo-bank</option>
+    <option value="terminal">06 · Audit Terminal</option>
+    <option value="institutional">07 · Institutional Seal</option>
+    <option value="deco">08 · Deco Ledger-House</option>
+    <option value="luxe">09 · Minimal Luxe</option>
+    <option value="editorial">10 · Editorial × Mono</option>
+  </select>
+</div>
+
+<div class="wrap">
+
+  <!-- ===== Masthead (content lives here ONCE) ===== -->
+  <header class="mast">
+    <div class="eyebrow" data-text="Audit Toolkit · Goods &amp; Services Tax">Audit Toolkit · Goods &amp; Services Tax</div>
+    <h1 class="title">GSTR Return <em>Analyser</em></h1>
+    <p class="lede">Portal GSTR-1 &amp; GSTR-3B returns → audit-ready Excel, transcribed entirely in your browser.</p>
+    <div class="statusbar"><span class="dot busy" id="dot"></span><span id="statusText">Loading engine…</span></div>
+  </header>
+
+  <!-- ===== 01 Return type ===== -->
+  <section class="sec" data-sec="return">
+    <div class="sec-head"><span class="sec-kicker">Return type</span></div>
+    <div class="card modes-card">
+      <div class="modes">
+        <button class="mode" data-mode="gstr1">
+          <span class="mk">Form</span><span class="mt">GSTR-1</span><span class="md">Outward supplies</span>
+        </button>
+        <button class="mode" data-mode="gstr3b">
+          <span class="mk">Form</span><span class="mt">GSTR-3B</span><span class="md">Summary return</span>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 02 Documents ===== -->
+  <section class="sec" data-sec="documents">
+    <div class="sec-head"><span class="sec-kicker">Documents</span></div>
+    <div class="card drop-card">
+      <div id="drop" class="drop">
+        <div class="drop-big">Drop GSTR PDFs here</div>
+        <div class="drop-small">or click to browse</div>
+        <input type="file" id="picker" accept="application/pdf" multiple hidden>
+      </div>
+      <div id="files" class="files"></div>
+    </div>
+  </section>
+
+  <!-- ===== 03 Extract ===== -->
+  <section class="sec" data-sec="extract">
+    <div class="sec-head"><span class="sec-kicker">Extract</span></div>
+    <div class="card run-card">
+      <button class="btn" id="run" disabled>Transcribe to Excel</button>
+      <div id="log" class="log"></div>
+    </div>
+  </section>
+
+  <!-- ===== 04 Ledgers (results) ===== -->
+  <section class="sec" data-sec="ledgers" id="resultsPanel" style="display:none">
+    <div class="sec-head"><span class="sec-kicker">Ledgers</span></div>
+    <div class="card results-card"><div id="results" class="results"></div></div>
+  </section>
+
+  <!-- ===== Footer / security ===== -->
+  <footer class="foot">
+    <span class="seal">100% LOCAL</span>
+    <p class="pledge"><b>Files never leave this device.</b> No upload, no server, no network — every PDF is parsed right here in your browser.</p>
+  </footer>
+
+</div>
+
+<script src="./pyodide/pyodide.js"></script>
+<script src="theme.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
