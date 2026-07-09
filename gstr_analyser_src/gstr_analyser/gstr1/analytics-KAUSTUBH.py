@@ -159,18 +159,6 @@ def build_executive_summary_gstr1(
     bdr = wb.add_format({"border": 1, "align": "left"})
     curr = wb.add_format({"num_format": "##,##,##0", "border": 1, "align": "right"})
     date_fmt = wb.add_format({"num_format": "mmm-yy", "border": 1, "align": "center"})
-    pass_fmt = wb.add_format({
-        "bold": True, "border": 1, "align": "center",
-        "font_color": "#375623", "bg_color": "#E2EFDA",
-    })
-    warn_fmt = wb.add_format({
-        "bold": True, "border": 1, "align": "center",
-        "font_color": "#7F6000", "bg_color": "#FFF2CC",
-    })
-    fail_fmt = wb.add_format({
-        "bold": True, "border": 1, "align": "center",
-        "font_color": "#C00000", "bg_color": "#FFE7E7",
-    })
 
     # ── column widths ─────────────────────────────────────────────────────────
     # 9 data columns: GSTIN(0), Period(1), B2B Value(2), B2B IGST(3),

@@ -18,6 +18,11 @@ graphify-out/
 # ── Generated report output ──
 *_Verified_Reports/
 
+# ── Client data — NEVER commit (real GST/PF/PTRC/TDS PDFs + extracted CSVs) ──
+Samples/
+*_combined_input/
+*_output/
+
 # ── OS / editor cruft ──
 Thumbs.db
 .DS_Store

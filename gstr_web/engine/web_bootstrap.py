@@ -57,22 +57,13 @@ def _patch_serial():
 
 
 def run(kind, input_dir, output_dir, progress_cb=None):
-    """Run a GSTR pipeline. kind = 'gstr1' | 'gstr3b'.
+    """Run the unified compliance return CSV pipeline.
 
-    Returns (auditor_path, analytics_path) inside the Pyodide FS.
+    Returns a list of dicts describing the output CSV files.
     """
     _patch_serial()
-    os.makedirs(output_dir, exist_ok=True)
-
-    if kind == "gstr1":
-        from gstr_analyser.gstr1.pipeline import run_pipeline_gstr1 as fn
-    elif kind == "gstr3b":
-        from gstr_analyser.gstr3b.pipeline import run_pipeline_gstr3b as fn
-    else:
-        raise ValueError("kind must be 'gstr1' or 'gstr3b'")
-
-    auditor, analytics = fn(input_dir, output_dir, progress_cb=progress_cb)
-    return auditor, analytics
+    from gstr_analyser.pipeline_csv import run_unified_pipeline
+    return run_unified_pipeline(input_dir, output_dir, progress_cb=progress_cb)
 
 
 def list_pdfs(input_dir):

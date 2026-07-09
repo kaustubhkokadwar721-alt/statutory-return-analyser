@@ -1,7 +1,7 @@
 # gstr_analyser.spec
 # Build: cd gstr_analyser_src && pyinstaller gstr_analyser.spec --clean --noconfirm
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules, collect_all
+from PyInstaller.utils.hooks import collect_submodules, collect_all
 
 block_cipher = None
 

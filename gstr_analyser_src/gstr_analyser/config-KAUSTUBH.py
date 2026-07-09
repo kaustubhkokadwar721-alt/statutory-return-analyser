@@ -12,12 +12,9 @@ Usage anywhere in the package:
         ...
 """
 
-from __future__ import annotations
-
 import os
 import sys
 from dataclasses import dataclass, field
-from typing import Any
 
 
 # ── locate config.toml ────────────────────────────────────────────────────────
@@ -158,18 +155,6 @@ class AppConfig:
 
 
 # ── loader ────────────────────────────────────────────────────────────────────
-
-def _get(data: dict, *keys: str, default: Any = None) -> Any:
-    """Safe nested dict lookup with a default."""
-    node = data
-    for key in keys:
-        if not isinstance(node, dict):
-            return default
-        node = node.get(key, default)
-        if node is default:
-            return default
-    return node
-
 
 def _load_toml(path: str) -> dict:
     try:

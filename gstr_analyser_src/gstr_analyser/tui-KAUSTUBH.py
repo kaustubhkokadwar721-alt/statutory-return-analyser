@@ -13,10 +13,9 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widget import Widget
-from textual.widgets import Button, DataTable, Footer, Input, ProgressBar, Static, Label
+from textual.widgets import Button, DataTable, Footer, Input, ProgressBar, Static
 
-from . import APP_NAME, VERSION
-from .ui import PipelineUI
+from . import VERSION
 
 
 class StrikingHeader(Static):
@@ -442,10 +441,8 @@ class GSTRAnalyserTUI(App):
 
         # Populate the DataTable — clear rows, keep columns
         self._stage_table.clear()
-        self._row_keys = []
         for label in self._stage_labels:
-            key = self._stage_table.add_row("✗", label, "—", key=label)
-            self._row_keys.append(label)
+            self._stage_table.add_row("✗", label, "—", key=label)
 
         # Height = number of rows + 1 (header)
         self._stage_table.styles.height = len(self._stage_labels) + 1
@@ -462,8 +459,6 @@ class GSTRAnalyserTUI(App):
     def _run_worker(self, input_dir: str, output_dir: str) -> None:
         from .gstr1.pipeline import run_pipeline_gstr1
         from .gstr3b.pipeline import run_pipeline_gstr3b
-
-        step_names = PipelineUI.STEPS
 
         def cb(step: int, detail: str) -> None:
             # Track metrics from detail strings emitted by the pipeline

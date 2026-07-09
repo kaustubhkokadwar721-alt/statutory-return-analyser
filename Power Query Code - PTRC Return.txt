@@ -1,0 +1,170 @@
+let
+    // ══════════════════════════════════════════════════════════════
+    // PT PTRC CHALLAN EXTRACTOR
+    // Extracts data from "MTR Form Number-6" (Maharashtra Profession Tax)
+    // ══════════════════════════════════════════════════════════════
+
+    // ── 1. READ FOLDER PATH FROM NAMED RANGE "Path_PT" ────────
+    SourcePath = Excel.CurrentWorkbook(){[Name="Path_PT"]}[Content]{0}[Column1],
+
+    // ── 2. GET ALL PDF FILES FROM FOLDER ─────────────────────────
+    AllFiles   = Folder.Files(SourcePath),
+    PDFsOnly   = Table.SelectRows(AllFiles, each Text.Lower([Extension]) = ".pdf"),
+    FileCols   = Table.SelectColumns(PDFsOnly, {"Content", "Name"}),
+
+    // ── 3. PARSE FUNCTION ────────────────────────────────────────
+    fnParsePT = (bin as binary, fname as text) as record =>
+    let
+        ParsedRecord = try
+        let
+            // Load PDF Content
+            RawData          = Pdf.Tables(bin, [Implementation="1.3"]),
+           
+            // Flatten All Text from Pages/Tables
+            AllPagesOrTables = if Table.RowCount(RawData) > 0 then Table.Combine(Table.Column(RawData, "Data")) else #table({}, {}),
+            AllCellsText     = List.Transform(List.Combine(Table.ToRows(AllPagesOrTables)), (x) => try Text.Trim(Text.From(x)) otherwise ""),
+            AllTextStr       = Text.Combine(List.Select(AllCellsText, each _ <> ""), " "),
+
+            // ── HELPER: Safe text from any cell ──────────────────
+            T = (v) => let s = try Text.Trim(Text.From(v)) otherwise "" in if s = null then "" else s,
+
+            // ── HELPER: Clean and parse a number string ───────────
+            N = (s as text) as nullable number =>
+                 let c = Text.Trim(Text.Remove(s, {",", Character.FromNumber(160), Character.FromNumber(10), Character.FromNumber(13), "₹"}))
+                 in if c = "" or c = "-" then 0 else try Number.FromText(c, "en-US") otherwise 0,
+
+            // ════════════════════════════════════════════════════════
+            // DATA EXTRACTION LOGIC
+            // ════════════════════════════════════════════════════════
+
+            // ── Col 1: Type of Return ─────────────────────────
+            idxType   = Text.PositionOf(AllTextStr, "Type of Payment"),
+            idxOffice = Text.PositionOf(AllTextStr, "Office Name"),
+            RawType   = if idxType >= 0 and idxOffice > idxType then Text.Trim(Text.Middle(AllTextStr, idxType + 15, idxOffice - (idxType + 15))) else "Unknown",
+            TypeOfReturn = if Text.Contains(RawType, "Maharashtra Profession Tax PTRC") then "Maharashtra Profession Tax PTRC" else RawType,
+
+            // ── Col 2: TAN ────────────────────────────────────
+            // Handling variations in PDF text extraction spacing (e.g., slashes with or without spaces)
+            idxTAN1 = Text.PositionOf(AllTextStr, "TAX ID/TAN (If Any)"),
+            idxTAN2 = Text.PositionOf(AllTextStr, "TAX ID / TAN (If Any)"),
+            idxTAN3 = Text.PositionOf(AllTextStr, "TAN (If Any)"),
+            
+            StartIdxTAN = if idxTAN1 >= 0 then idxTAN1 + 19 
+                          else if idxTAN2 >= 0 then idxTAN2 + 21 
+                          else if idxTAN3 >= 0 then idxTAN3 + 12 
+                          else -1,
+                          
+            TANRaw = if StartIdxTAN >= 0 then Text.Trim(Text.Middle(AllTextStr, StartIdxTAN, 30)) else "",
+            TANValRaw = if TANRaw <> "" then Text.Split(TANRaw, " "){0} else "Unknown",
+            
+            // Prevent pulling the next label if TAN field is empty in the PDF
+            TANVal = if TANValRaw = "PAN" or TANValRaw = "Type" or TANValRaw = "Full" then "" else TANValRaw,
+
+            // ── Col 3: Company Name (Handling Split Fields) ───
+            idxFullName = Text.PositionOf(AllTextStr, "Full Name"),
+            idxLocation = Text.PositionOf(AllTextStr, "Location"),
+            NamePart1   = if idxFullName >= 0 and idxLocation > idxFullName then Text.Trim(Text.Middle(AllTextStr, idxFullName + 9, idxLocation - (idxFullName + 9))) else "",
+            
+            idxRemarks  = Text.PositionOf(AllTextStr, "Remarks (If Any)"),
+            idxAmtIn    = Text.PositionOf(AllTextStr, "Amount In"),
+            RemarksGap  = idxAmtIn - (idxRemarks + 16),
+            NamePart2   = if idxRemarks >= 0 and idxAmtIn > idxRemarks and RemarksGap < 150 then Text.Trim(Text.Middle(AllTextStr, idxRemarks + 16, RemarksGap)) else "",
+            
+            CompanyName = Text.Trim(NamePart1 & " " & NamePart2),
+
+            // ── Col 5: Date of filing ─────────────────────────
+            idxDate  = Text.PositionOf(AllTextStr, "Date "),
+            DateRaw  = if idxDate >= 0 then Text.Middle(AllTextStr, idxDate + 5, 10) else "",
+            FilingDate = Text.Trim(DateRaw),
+
+            // ── Col 6: Year ───────────────────────────────────
+            idxYear = Text.PositionOf(AllTextStr, "Year"),
+            YearRaw = if idxYear >= 0 then Text.Middle(AllTextStr, idxYear + 4, 15) else "",
+            YearVal = Text.Split(Text.Trim(YearRaw), " "){0},
+
+            // ── Col 7 & Col 4: Month & PTRC Return Month ──────
+            idxFromStr = Text.PositionOf(AllTextStr, "From "),
+            FromDateRaw = if idxFromStr >= 0 then Text.Trim(Text.Middle(AllTextStr, idxFromStr + 5, 10)) else "",
+            ParsedFromDate = try Date.FromText(FromDateRaw, [Format="dd/MM/yyyy", Culture="en-GB"]) otherwise null,
+            
+            MonthVal = if ParsedFromDate <> null then Date.ToText(ParsedFromDate, "MMMM yyyy") else "Unknown",
+            
+            ReturnMonthDate = try Date.AddMonths(ParsedFromDate, -1) otherwise null,
+            PTRCReturnMonth = if ReturnMonthDate <> null then Date.ToText(ReturnMonthDate, "MMM yyyy") else "Unknown",
+
+            // ── Col 8: PT Paid ────────────────────────────────
+            idxAmtTax = Text.PositionOf(AllTextStr, "AMOUNT OF TAX"),
+            AmtRaw    = if idxAmtTax >= 0 then Text.Trim(Text.Middle(AllTextStr, idxAmtTax + 13, 20)) else "",
+            AmtStr    = Text.Split(AmtRaw, " "){0},
+            PTPaid    = N(AmtStr),
+            
+            // ── Col 9: Ref. No. (Challan No.) ─────────────────
+            idxRef = Text.PositionOf(AllTextStr, "Ref. No."),
+            RefRaw = if idxRef >= 0 then Text.Trim(Text.Middle(AllTextStr, idxRef + 8, 30)) else "",
+            ChallanNo = if RefRaw <> "" then Text.Split(RefRaw, " "){0} else "Unknown"
+        in
+            [
+                #"Type of Return"            = TypeOfReturn,
+                #"TAN"                       = TANVal,
+                #"Company Name"              = if CompanyName = "" then "Unknown" else CompanyName,
+                #"PTRC return for the month" = PTRCReturnMonth,
+                #"Date of filing"            = if FilingDate = "" then "Unknown" else FilingDate,
+                #"Year"                      = if YearVal = "" then "Unknown" else YearVal,
+                #"Month"                     = MonthVal,
+                #"PT Paid"                   = PTPaid,
+                #"Challan No."               = ChallanNo
+            ]
+
+        // Error fallback
+        otherwise
+            [
+                #"Type of Return"            = "ERROR",
+                #"TAN"                       = "ERROR",
+                #"Company Name"              = fname,
+                #"PTRC return for the month" = "ERROR",
+                #"Date of filing"            = "ERROR",
+                #"Year"                      = "ERROR",
+                #"Month"                     = "ERROR",
+                #"PT Paid"                   = null,
+                #"Challan No."               = "ERROR"
+            ]
+    in
+        ParsedRecord,
+
+    // ── 4. APPLY PARSER TO EVERY PDF ─────────────────────────────
+    ParsedTable  = Table.AddColumn(FileCols, "ExtractedData", each fnParsePT([Content], [Name])),
+    RemovedFiles = Table.RemoveColumns(ParsedTable, {"Content", "Name"}),
+
+    // ── 5. EXPAND EXACT 9 COLUMNS ────────────────────────────────
+    ExpandedData = Table.ExpandRecordColumn(RemovedFiles, "ExtractedData", {
+        "Type of Return", "TAN", "Company Name", "PTRC return for the month", "Date of filing", "Year", "Month", "PT Paid", "Challan No."
+    }),
+
+    // ── 6. SET DATA TYPES ────────────────────────────────────────
+    TypedData = Table.TransformColumnTypes(ExpandedData, {
+        {"Type of Return",            type text},
+        {"TAN",                       type text},
+        {"Company Name",              type text},
+        {"PTRC return for the month", type text},
+        {"Date of filing",            type text},
+        {"Year",                      type text},
+        {"Month",                     type text},
+        {"PT Paid",                   type number},
+        {"Challan No.",               type text}
+    }),
+
+    // ── 7. ADD SORT DATE FOR CHRONOLOGICAL SORTING ───────────────────
+    AddSortDate = Table.AddColumn(TypedData, "SortDate", each 
+        try Date.FromText("01 " & [#"PTRC return for the month"], [Culture="en-GB"]) otherwise #date(1900,1,1)
+    ),
+
+    // ── 8. SORT: Chronologically by PTRC Return Month → Company Name ─
+    SortedData = Table.Sort(AddSortDate, {
+        {"SortDate",     Order.Ascending},
+        {"Company Name", Order.Ascending}
+    }),
+
+    // ── 9. REMOVE HELPER COLUMN ───────────────────────────────────
+    FinalData = Table.RemoveColumns(SortedData, {"SortDate"})
+in
+    FinalData

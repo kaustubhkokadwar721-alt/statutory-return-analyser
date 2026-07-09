@@ -291,8 +291,6 @@ def build_executive_summary_gstr3b(
         r.get("GSTIN", ""),
     ))
 
-    status_fmts = {"PASS": pass_fmt, "WARN": warn_fmt, "FAIL": fail_fmt, "REVIEW": warn_fmt}
-
     for row_idx, ret in enumerate(unique_returns, start=7):
         gstin = ret.get("GSTIN", "")
         period = ret.get("Period_Year", "")
