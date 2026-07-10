@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Compliance Return Analyser</title>
-<meta name="description" content="Parse GSTR-1, GSTR-3B, TDS, PF, ESIC, PTRC returns from PDFs into clean CSV ledgers — entirely in your browser.">
+<title>Statutory Return Analyser</title>
+<meta name="description" content="Parse GSTR-1, GSTR-3B, TDS, PF, ESIC and PTRC return PDFs into clean, verified CSV ledgers, entirely in your browser.">
 <link rel="stylesheet" href="themes/prime.css">
 </head>
 <body>
@@ -13,9 +13,12 @@
 
   <!-- ===== Masthead ===== -->
   <header class="mast">
-    <div class="eyebrow">Statutory compliance · for audit working papers</div>
-    <h1 class="title">Return <em>Analyser</em></h1>
+    <div class="eyebrow">For audit working papers</div>
+    <h1 class="title">Statutory Return <em>Analyser</em></h1>
     <p class="lede">Drop your return PDFs. Get verified ledgers and a compliance overview, parsed entirely on this device.</p>
+    <ul class="supports" aria-label="Return types handled">
+      <li>GSTR-1</li><li>GSTR-3B</li><li>TDS (281)</li><li>PF ECR</li><li>ESIC</li><li>PTRC</li>
+    </ul>
     <div class="statusbar">
       <span class="dot busy" id="dot"></span>
       <span id="statusText">Loading engine…</span>

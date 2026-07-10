@@ -1,4 +1,4 @@
-# Return Analyser
+# Statutory Return Analyser
 
 Turn statutory-return PDFs — **GSTR-1, GSTR-3B, TDS (ITNS-281), PF ECR, ESIC, PTRC** —
 into clean, verified CSV ledgers with a compliance overview, **entirely in your browser**.
@@ -6,7 +6,7 @@ No upload, no server, no install.
 
 ### ▶ Use it now (one click)
 
-**https://kaustubhkokadwar721-alt.github.io/gstr-return-analyser/**
+**https://kaustubhkokadwar721-alt.github.io/statutory-return-analyser/**
 
 Drop your PDFs → the engine auto-detects each return type → read the dashboard, download the ledgers.
 
