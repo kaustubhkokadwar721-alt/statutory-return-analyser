@@ -120,7 +120,7 @@ def run_unified_pipeline(
 
                 # ── GSTR-1 ────────────────────────────────────────────────
                 if return_type == "GSTR1":
-                    res = parse_gstr1(fpath, errors)
+                    res = parse_gstr1(fpath, errors, pdf=pdf)
                     if not res:
                         continue
                     meta = res["Metadata"]
@@ -155,6 +155,8 @@ def run_unified_pipeline(
                         "Status":        status,
                         "Flags":         flags,
                         "PrimaryAmount": primary_amt,
+                        "DocRef":        meta.get("ARN", ""),
+                        "FilingDate":    meta.get("Date_of_ARN", None),
                         "SourceFile":    fname,
                     })
                     for _, row in sec_totals.iterrows():
@@ -165,7 +167,7 @@ def run_unified_pipeline(
 
                 # ── GSTR-3B ───────────────────────────────────────────────
                 elif return_type == "GSTR3B":
-                    res = parse_complete_gstr3b(fpath, errors)
+                    res = parse_complete_gstr3b(fpath, errors, pdf=pdf)
                     if not res:
                         continue
                     meta = res["Metadata"]
@@ -207,6 +209,8 @@ def run_unified_pipeline(
                         "Status":        status,
                         "Flags":         flags,
                         "PrimaryAmount": primary_amt,
+                        "DocRef":        meta.get("ARN", ""),
+                        "FilingDate":    meta.get("Date_of_ARN", None),
                         "SourceFile":    fname,
                     })
                     flat = {"SourceFile": fname}
@@ -265,6 +269,8 @@ def run_unified_pipeline(
                         "Status":        status,
                         "Flags":         flags,
                         "PrimaryAmount": primary_amt,
+                        "DocRef":        res.get("DocRef", ""),
+                        "FilingDate":    res.get("FilingDate", None),
                         "SourceFile":    fname,
                     })
                     raw_details["PF"].append(res)
@@ -297,6 +303,8 @@ def run_unified_pipeline(
                         "Status":        status,
                         "Flags":         flags,
                         "PrimaryAmount": res.get("PT Paid", 0),
+                        "DocRef":        res.get("DocRef", ""),
+                        "FilingDate":    res.get("FilingDate", None),
                         "SourceFile":    fname,
                     })
                     raw_details["PTRC"].append(res)
@@ -317,6 +325,8 @@ def run_unified_pipeline(
                         flags_list.append("SECTION?")
                     if res.get("Total Amount Paid", 0) <= 0:
                         flags_list.append("AMT?")
+                    if res.get("PeriodEstimated"):
+                        flags_list.append("PERIOD_EST")
 
                     flags  = "; ".join(flags_list)
                     status = "Review" if flags_list else "OK"
@@ -333,6 +343,8 @@ def run_unified_pipeline(
                         "Status":        status,
                         "Flags":         flags,
                         "PrimaryAmount": res.get("Total Amount Paid", 0),
+                        "DocRef":        res.get("DocRef", ""),
+                        "FilingDate":    res.get("FilingDate", None),
                         "SourceFile":    fname,
                     })
                     raw_details["TDS"].append(res)
@@ -390,6 +402,8 @@ def run_unified_pipeline(
                 "Status":        status,
                 "Flags":         flags,
                 "PrimaryAmount": row.get("Amount", 0),
+                "DocRef":        row.get("DocRef", ""),
+                "FilingDate":    row.get("FilingDate", None),
                 "SourceFile":    row["SourceFile"],
             })
         raw_details["ESIC"] = df_esic.to_dict("records")
@@ -399,6 +413,11 @@ def run_unified_pipeline(
 
     if records:
         df_all = pd.DataFrame(records)
+        # Normalise FilingDate to ISO across all return types (GSTR uses DD/MM/YYYY)
+        if "FilingDate" in df_all.columns:
+            df_all["FilingDate"] = pd.to_datetime(
+                df_all["FilingDate"], format="mixed", dayfirst=True, errors="coerce"
+            ).dt.strftime("%Y-%m-%d")
         df_all = df_all.sort_values(["ReturnType", "FY", "MonthIndex", "EntityID"])
         path_all = os.path.join(output_dir, "All_Returns_Consolidated.csv")
         df_all.to_csv(path_all, index=False)

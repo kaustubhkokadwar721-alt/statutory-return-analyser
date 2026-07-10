@@ -2,6 +2,7 @@
 
 import os
 import re
+import contextlib
 
 import pandas as pd
 import pdfplumber
@@ -176,14 +177,20 @@ def _combine_itc_pieces(itc_table_pieces: list[pd.DataFrame]) -> pd.DataFrame | 
     return clean_gstr3b_dataframe(combined_itc, ["Details", "Section"])
 
 
-def parse_complete_gstr3b(pdf_path: str, error_log: list) -> dict | None:
-    """Open and parse a GSTR-3B PDF. Append a friendly error row on failure."""
+def parse_complete_gstr3b(pdf_path: str, error_log: list, pdf=None) -> dict | None:
+    """Open and parse a GSTR-3B PDF. Append a friendly error row on failure.
+
+    If an already-open pdfplumber ``pdf`` is passed (e.g. from the unified
+    pipeline, which opens once for return-type detection), it is reused instead
+    of re-opening the file — the caller retains ownership and closes it.
+    """
     fname = os.path.basename(pdf_path)
     try:
         parsed = {"Metadata": {}, **{name: None for name in TABLE_NAMES}}
         itc_table_pieces = []
 
-        with pdfplumber.open(pdf_path) as pdf:
+        _own = pdf is None
+        with (pdfplumber.open(pdf_path) if _own else contextlib.nullcontext(pdf)) as pdf:
             if not pdf.pages:
                 raise ValueError("PDF has no pages.")
 

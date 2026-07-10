@@ -1,8 +1,0 @@
-# GSTR Return Analyser — Python dependencies
-# Install with:  pip install -r requirements.txt
-
-pdfplumber>=0.11.0   # PDF parsing (text + table extraction)
-pandas>=2.0.0        # DataFrame processing
-xlsxwriter>=3.1.0    # Excel workbook generation with formatting
-rich>=13.0.0         # Terminal progress panel (Live + Panel)
-textual>=0.80.0      # Textual TUI framework

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Compliance Return Analyser</title>
 <meta name="description" content="Parse GSTR-1, GSTR-3B, TDS, PF, ESIC, PTRC returns from PDFs into clean CSV ledgers — entirely in your browser.">
-<link rel="stylesheet" href="themes/dark_neo.css">
+<link rel="stylesheet" href="themes/prime.css">
 </head>
 <body>
 
@@ -13,9 +13,9 @@
 
   <!-- ===== Masthead ===== -->
   <header class="mast">
-    <div class="eyebrow">Audit Toolkit · Compliance Returns</div>
+    <div class="eyebrow">Statutory compliance · for audit working papers</div>
     <h1 class="title">Return <em>Analyser</em></h1>
-    <p class="lede">Drop PDFs — any return type — and get clean CSV ledgers. Runs fully offline in your browser. Nothing is uploaded.</p>
+    <p class="lede">Drop your return PDFs. Get verified ledgers and a compliance overview, parsed entirely on this device.</p>
     <div class="statusbar">
       <span class="dot busy" id="dot"></span>
       <span id="statusText">Loading engine…</span>
@@ -28,7 +28,7 @@
     <div class="card drop-card">
       <div id="drop" class="drop">
         <div class="drop-big">Drop PDFs here</div>
-        <div class="drop-small">GSTR-1 · GSTR-3B · TDS · PF · ESIC · PTRC — or click to browse</div>
+        <div class="drop-small">GSTR-1 · GSTR-3B · TDS · PF · ESIC · PTRC · click to browse</div>
         <input type="file" id="picker" accept="application/pdf" multiple hidden>
       </div>
       <div id="files" class="files"></div>
@@ -44,16 +44,34 @@
     </div>
   </section>
 
-  <!-- ===== 03 Ledgers (results) ===== -->
+  <!-- ===== 03 Overview (dashboard) ===== -->
+  <section class="sec" data-sec="overview" id="dashPanel" style="display:none">
+    <div class="sec-head"><span class="sec-kicker">Overview</span></div>
+    <div class="card">
+      <div id="kpis" class="kpis"></div>
+      <div id="dashTable" class="tbl-wrap"></div>
+    </div>
+  </section>
+
+  <!-- ===== 04 Records ===== -->
+  <section class="sec" data-sec="records" id="recPanel" style="display:none">
+    <div class="sec-head">
+      <span class="sec-kicker">Records</span>
+      <label class="flagtoggle"><input type="checkbox" id="flaggedOnly"> Flagged only</label>
+    </div>
+    <div class="card"><div id="recTable" class="tbl-wrap"></div></div>
+  </section>
+
+  <!-- ===== 05 Ledgers (results) ===== -->
   <section class="sec" data-sec="ledgers" id="resultsPanel" style="display:none">
-    <div class="sec-head"><span class="sec-kicker">Ledgers</span></div>
+    <div class="sec-head"><span class="sec-kicker">Download</span></div>
     <div class="card results-card"><div id="results" class="results"></div></div>
   </section>
 
   <!-- ===== Footer ===== -->
   <footer class="foot">
     <span class="seal">100%<br>LOCAL</span>
-    <p class="pledge"><b>Files never leave this device.</b> No upload, no server, no network — every PDF is parsed right here in your browser via Python compiled to WebAssembly.</p>
+    <p class="pledge"><b>Files never leave this device.</b> No upload, no server, no network. Every PDF is parsed right here in your browser via Python compiled to WebAssembly.</p>
   </footer>
 
 </div>

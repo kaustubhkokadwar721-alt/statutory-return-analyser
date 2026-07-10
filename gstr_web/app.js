@@ -19,6 +19,9 @@ let pyodide    = null;
 let ready      = false;
 let pickedFiles = [];   // [{name, bytes}]
 let outputs    = {};
+let consolidated = [];  // parsed rows of All_Returns_Consolidated.csv
+let dashboard    = [];  // parsed rows of Dashboard_Summary.csv
+let parseErrors  = [];  // files that could not be parsed at all
 
 // ---- dom ----
 const $ = (s) => document.querySelector(s);
@@ -117,7 +120,10 @@ runBtn.addEventListener("click", async () => {
   if (!ready || pickedFiles.length === 0) return;
   runBtn.disabled = true;
   outputs = {};
+  consolidated = []; dashboard = []; parseErrors = [];
   resultsPanel.style.display = "none";
+  document.getElementById("dashPanel").style.display = "none";
+  document.getElementById("recPanel").style.display = "none";
   resultsEl.classList.remove("show");
   resultsEl.innerHTML = "";
   logEl.textContent = "";
@@ -148,6 +154,16 @@ json.dumps(files_list)
       addResult(f.label, f.desc, f.path, FS);
     }
 
+    // ---- in-browser dashboard from the CSVs the engine just wrote ----
+    try {
+      consolidated = parseCSV(FS.readFile("/work/out/All_Returns_Consolidated.csv", { encoding: "utf8" }));
+      dashboard    = readMaybe(FS, "/work/out/Dashboard_Summary.csv");
+      parseErrors  = readMaybe(FS, "/work/out/Parsing_Errors.csv");
+      renderDashboard();
+    } catch (e) {
+      console.warn("Dashboard render skipped:", e);
+    }
+
     resultsPanel.style.display = "block";
     resultsEl.classList.add("show");
     setStatus(`Done — ${pickedFiles.length} PDF(s) processed, ${files.length} CSV(s) ready.`, "ok");
@@ -161,6 +177,100 @@ json.dumps(files_list)
     maybeEnableRun();
   }
 });
+
+// ---- dashboard rendering ----
+function readMaybe(FS, path) {
+  try { return parseCSV(FS.readFile(path, { encoding: "utf8" })); }
+  catch { return []; }
+}
+
+// RFC-4180-ish CSV parser (handles quoted fields, embedded commas/newlines)
+function parseCSV(text) {
+  const rows = []; let row = [], cur = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; }
+      else cur += c;
+    } else if (c === '"') q = true;
+    else if (c === ",") { row.push(cur); cur = ""; }
+    else if (c === "\r") { /* skip */ }
+    else if (c === "\n") { row.push(cur); rows.push(row); row = []; cur = ""; }
+    else cur += c;
+  }
+  if (cur !== "" || row.length) { row.push(cur); rows.push(row); }
+  if (!rows.length) return [];
+  const hdr = rows.shift();
+  return rows
+    .filter((r) => r.some((v) => v !== ""))
+    .map((r) => Object.fromEntries(hdr.map((h, i) => [h, r[i] ?? ""])));
+}
+
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const money = (n) => (Number(n) || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 });
+const period = (r) => {
+  const d = (r.PeriodDate || "").slice(0, 7);
+  return d && d !== "nan" ? d : (r.MonthName && r.MonthName !== "Unknown" ? r.MonthName : "—");
+};
+
+function renderDashboard() {
+  const n = consolidated.length;
+  const failed = parseErrors.length;
+  const by = (s) => consolidated.filter((r) => r.Status === s).length;
+  const liab = consolidated.reduce((s, r) => s + (Number(r.PrimaryAmount) || 0), 0);
+  const kpis = [
+    ["Documents", n + failed, ""],
+    ["Clean", by("OK"), "ok"],
+    ["Review", by("Review"), "review"],
+    ["Errors", by("Error"), "error"],
+  ];
+  if (failed) kpis.push(["Unreadable", failed, "error"]);
+  kpis.push(["Total value ₹", money(liab), ""]);
+  document.getElementById("kpis").innerHTML = kpis
+    .map(([l, v, c]) => `<div class="kpi ${c}"><div class="kpi-v">${v}</div><div class="kpi-l">${l}</div></div>`)
+    .join("");
+  document.getElementById("dashTable").innerHTML = dashTableHTML();
+  renderRecords();
+  document.getElementById("dashPanel").style.display = "block";
+  document.getElementById("recPanel").style.display = "block";
+}
+
+function dashTableHTML() {
+  if (!dashboard.length) return "";
+  const head = ["Return", "FY", "Docs", "OK", "Review", "Err", "Periods", "Value ₹"];
+  const body = dashboard.map((d) => `<tr>
+      <td>${esc(d.ReturnType)}</td><td>${esc(d.FY)}</td>
+      <td class="num">${d.Records}</td>
+      <td class="num">${d.OK}</td>
+      <td class="num rev">${d.Review}</td>
+      <td class="num err">${d.Errors}</td>
+      <td class="num">${d.Periods}</td>
+      <td class="num">${money(d.TotalPrimaryAmt)}</td></tr>`).join("");
+  return `<table class="tbl"><thead><tr>${head.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+function renderRecords() {
+  const flaggedOnly = document.getElementById("flaggedOnly").checked;
+  let rows = consolidated.slice();
+  if (flaggedOnly) rows = rows.filter((r) => r.Status !== "OK");
+  const head = ["", "Return", "Entity", "FY", "Period", "Value ₹", "Flags", "Source"];
+  const body = rows.map((r) => {
+    const st = (r.Status || "").toLowerCase();
+    return `<tr>
+      <td><span class="pill ${st}">${esc(r.Status)}</span></td>
+      <td>${esc(r.ReturnType)}</td>
+      <td class="ell" title="${esc(r.EntityName)} (${esc(r.EntityID)})">${esc(r.EntityID)}</td>
+      <td>${esc(r.FY)}</td>
+      <td>${esc(period(r))}</td>
+      <td class="num">${money(r.PrimaryAmount)}</td>
+      <td class="flags">${esc(r.Flags)}</td>
+      <td class="ell src" title="${esc(r.SourceFile)}">${esc(r.SourceFile)}</td></tr>`;
+  }).join("");
+  document.getElementById("recTable").innerHTML =
+    `<table class="tbl rec"><thead><tr>${head.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+document.getElementById("flaggedOnly").addEventListener("change", renderRecords);
 
 function addResult(label, desc, fsPath, FS) {
   const bytes    = FS.readFile(fsPath);
