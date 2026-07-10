@@ -27,6 +27,22 @@ def _find_after(text: str, label: str, width: int = 80) -> str:
         return ""
     return text[idx + len(label): idx + len(label) + width].strip()
 
+def _norm_date(s):
+    """Best-effort normalise a date string to ISO (YYYY-MM-DD); return input if unparseable."""
+    s = (s or "").strip()
+    if not s or s.lower() == "unknown":
+        return None
+    for fmt in ("%d %b %Y", "%d %B %Y", "%d-%b-%Y", "%d/%m/%Y", "%d-%m-%Y",
+                "%b %d, %Y", "%b %d,%Y", "%Y-%m-%d"):
+        try:
+            return pd.to_datetime(s, format=fmt).strftime("%Y-%m-%d")
+        except Exception:
+            pass
+    try:
+        return pd.to_datetime(s, dayfirst=True).strftime("%Y-%m-%d")
+    except Exception:
+        return s
+
 def _period_date(month_upper: str, fy_start: int):
     mi = MONTH_INDICES.get(month_upper[:3], 0)
     if mi == 0 or fy_start == 0:
@@ -134,6 +150,19 @@ def parse_tds(pdf, fname: str) -> dict:
         else:
             deduction_date = payment_date.replace(day=1)
 
+    # Clamp to the stated FY. A late / additional challan (e.g. FY24-25 tax paid
+    # in Jul-2025 with interest) would otherwise land the deduction month in a
+    # different FY. If so, treat it as year-end (March of the FY) and flag it.
+    period_estimated = False
+    m_fy = re.search(r"(\d{4})", fy_val)
+    fy_start = int(m_fy.group(1)) if m_fy else 0
+    if deduction_date is not None and not pd.isna(deduction_date) and fy_start:
+        fy_lo = pd.Timestamp(year=fy_start, month=4, day=1)
+        fy_hi = pd.Timestamp(year=fy_start + 1, month=3, day=1)
+        if deduction_date < fy_lo or deduction_date > fy_hi:
+            deduction_date = fy_hi
+            period_estimated = True
+
     if deduction_date is not None and not pd.isna(deduction_date):
         tds_month  = deduction_date.strftime("%B %Y")
         period_date = deduction_date
@@ -145,6 +174,10 @@ def parse_tds(pdf, fname: str) -> dict:
         payment_date.strftime("%Y-%m-%d")
         if payment_date is not None and not pd.isna(payment_date) else None
     )
+
+    # ── Registration / filing metadata ──
+    cin_val = kv(r"CIN")             or ""
+    ay_val  = kv(r"Assessment Year") or ""
 
     return {
         "ReturnType":             "TDS",
@@ -164,7 +197,12 @@ def parse_tds(pdf, fname: str) -> dict:
         "Crosscheck Diff":        crosscheck_diff,
         "Challan No":             challan_no,
         "Payment Date":           payment_date_str,
+        "CIN":                    cin_val,
+        "Assessment Year":        ay_val,
+        "DocRef":                 challan_no or cin_val,
+        "FilingDate":             payment_date_str,
         "PeriodDate":             period_date,
+        "PeriodEstimated":        period_estimated,
     }
 
 
@@ -190,41 +228,30 @@ def parse_tds(pdf, fname: str) -> dict:
 def parse_pf(pdf, fname: str) -> dict:
     full_text = _page_text(pdf)
 
-    # ── Detect layout ──
-    is_layout_b = bool(re.search(r"CHALLAN FOR WAGE MONTH", full_text, re.IGNORECASE))
-
-    # ── Entity: Layout A ──
-    if not is_layout_b:
-        est_m = re.search(
-            r"Establishment Code\s*&\s*(?:Name\s+)?([A-Z0-9]+)\s+(.+?)\s+Dues for the wage month",
-            full_text, re.IGNORECASE | re.DOTALL,
-        )
-        if est_m:
-            estab_code = est_m.group(1).strip()
-            estab_name = re.sub(r"\s+", " ", est_m.group(2)).strip()
-            estab_name = re.split(r"\bAddress\b", estab_name, flags=re.IGNORECASE)[0].strip()
-        else:
-            estab_code, estab_name = "Unknown", "Unknown"
-
-        wage_m = re.search(
-            r"Dues for the wage month(?:\s+of)?\s+([A-Za-z]+)\s+(\d{4})",
-            full_text, re.IGNORECASE,
-        )
-
-    # ── Entity: Layout B ──
+    # ── Entity ──
+    # Layout A:  "Establishment Code & <CODE> <NAME> ... Dues for the wage month"
+    # Layout B / Arrears:  "Code : <CODE> Name : <NAME>"
+    est_a = re.search(
+        r"Establishment Code\s*&\s*(?:Name\s+)?([A-Z0-9]+)\s+(.+?)\s+Dues for the wage month",
+        full_text, re.IGNORECASE | re.DOTALL,
+    )
+    if est_a:
+        estab_code = est_a.group(1).strip()
+        estab_name = re.sub(r"\s+", " ", est_a.group(2)).strip()
+        estab_name = re.split(r"\bAddress\b", estab_name, flags=re.IGNORECASE)[0].strip()
     else:
-        # "Code : <ESTAB_CODE> Name : <COMPANY NAME>..."
-        code_m = re.search(r"Code\s*:\s*([A-Z0-9]+)", full_text, re.IGNORECASE)
-        name_m = re.search(r"Name\s*:\s*(.+?)(?:\n|Address)", full_text, re.IGNORECASE | re.DOTALL)
+        # require ≥2 leading letters so numeric "PIN Code : 411003" can't match
+        code_m = re.search(r"\bCode\s*:\s*([A-Z]{2,}[A-Z0-9]+)", full_text, re.IGNORECASE)
+        name_m = re.search(r"\bName\s*:\s*(.+?)(?:\n|Address)", full_text, re.IGNORECASE | re.DOTALL)
         estab_code = code_m.group(1).strip() if code_m else "Unknown"
         estab_name = re.sub(r"\s+", " ", name_m.group(1)).strip() if name_m else "Unknown"
 
-        # "CHALLAN FOR WAGE MONTH : SEP 2025"
-        wage_m = re.search(
-            r"CHALLAN FOR WAGE MONTH\s*:\s*([A-Za-z]+)\s+(\d{4})",
-            full_text, re.IGNORECASE,
-        )
-
+    # ── Wage month + year (regular / dues / arrears layouts) ──
+    wage_m = (
+        re.search(r"CHALLAN FOR WAGE MONTH\s*:\s*([A-Za-z]+)\s+(\d{4})", full_text, re.IGNORECASE)
+        or re.search(r"Dues for the wage month(?:\s+of)?\s+([A-Za-z]+)\s+(\d{4})", full_text, re.IGNORECASE)
+        or re.search(r"Period\s*:\s*([A-Za-z]+)\s+(\d{4})", full_text, re.IGNORECASE)
+    )
     if wage_m:
         month_val = wage_m.group(1).strip()
         raw_year  = int(wage_m.group(2))
@@ -234,41 +261,39 @@ def parse_pf(pdf, fname: str) -> dict:
     month_upper        = month_val.upper()
     fy_str, fy_start   = _fy_from_month_year(month_upper, raw_year)
 
-    # ── Challan date ──
-    challan_m = re.search(r"system generated challan on\s+([^\s,\n]+)", full_text, re.IGNORECASE)
-    if not challan_m:
-        challan_m = re.search(r"(?:Date|Generated On)[:\s]+(\d{2}[-/][A-Za-z0-9]+[-/]\d{4})", full_text, re.IGNORECASE)
+    # ── Challan / generation date ──
+    challan_m = (
+        re.search(r"system generated challan on\s+([^\s,\n]+)", full_text, re.IGNORECASE)
+        or re.search(r"Generated On\s*(\d{2}[-/][A-Za-z0-9]+[-/]\d{4})", full_text, re.IGNORECASE)
+        or re.search(r"(?:Date)[:\s]+(\d{2}[-/][A-Za-z0-9]+[-/]\d{4})", full_text, re.IGNORECASE)
+    )
     challan_date = challan_m.group(1).strip() if challan_m else "Unknown"
 
-    # ── Amounts ──
-    # Treat "NA" as 0: replace NA tokens before parsing
+    # ── Amounts ── ("NA" → 0). Row layout differs; discriminate by the exact label.
     clean_text = re.sub(r"\bNA\b", "0", full_text)
+    has_contribution = bool(re.search(r"Share\s+Of\s+Contribution", clean_text, re.IGNORECASE))
 
-    if not is_layout_b:
-        # Layout A: columns are AC01 AC02 AC10 AC21 AC22 TOTAL
-        admin_nums    = _row_nums(clean_text, r"Administration\s+Charges")
-        employer_nums = _row_nums(clean_text, r"Employer.{0,5}Share\s+Of")
-        employee_nums = _row_nums(clean_text, r"Employee.{0,5}Share\s+Of")
-        employer_epf_ac01  = employer_nums[0]
-        employer_eps_ac10  = employer_nums[2]
-        employer_edli_ac21 = employer_nums[3]
-        pf_admin_ac02      = admin_nums[1]
-        edli_admin_ac22    = admin_nums[4]
-        employee_epf_ac01  = employee_nums[0]
-    else:
-        # Layout B: Employee row first, Employer row second, Admin row third
-        # Employee row: AC01  (employee EPF share)
-        # Employer row: AC01(employer EPF), _, AC10(EPS), AC21(EDLI), _
-        # Admin row:   _, AC02(PF admin), _, _, AC22(EDLI admin)
+    if has_contribution:
+        # Layout B / Arrears: Employee / Employer / Admin-Insp rows
         employee_nums = _row_nums(clean_text, r"Employee.{0,5}Share\s+Of\s+Contribution")
         employer_nums = _row_nums(clean_text, r"Employer.{0,5}Share\s+Of\s+Contribution")
         admin_nums    = _row_nums(clean_text, r"Admin.{0,10}Insp\.?\s*Charges")
-        employer_epf_ac01  = employer_nums[0]
-        employer_eps_ac10  = employer_nums[2]
-        employer_edli_ac21 = employer_nums[3]
-        pf_admin_ac02      = admin_nums[1]
-        edli_admin_ac22    = admin_nums[4]
-        employee_epf_ac01  = employee_nums[0]
+    else:
+        # Layout A: Administration Charges / Employer's Share Of / Employee's Share Of
+        admin_nums    = _row_nums(clean_text, r"Administration\s+Charges")
+        employer_nums = _row_nums(clean_text, r"Employer.{0,5}Share\s+Of")
+        employee_nums = _row_nums(clean_text, r"Employee.{0,5}Share\s+Of")
+
+    employer_epf_ac01  = employer_nums[0]
+    employer_eps_ac10  = employer_nums[2]
+    employer_edli_ac21 = employer_nums[3]
+    pf_admin_ac02      = admin_nums[1]
+    edli_admin_ac22    = admin_nums[4]
+    employee_epf_ac01  = employee_nums[0]
+
+    # ── Registration / filing metadata ──
+    trrn_m = re.search(r"TRRN\s*:?\s*(\d+)", full_text, re.IGNORECASE)
+    trrn   = trrn_m.group(1) if trrn_m else ""
 
     return {
         "ReturnType":           "PF",
@@ -276,6 +301,9 @@ def parse_pf(pdf, fname: str) -> dict:
         "EntityName":           estab_name,
         "FY":                   fy_str,
         "Challan_Date":         challan_date,
+        "TRRN":                 trrn,
+        "DocRef":               trrn or challan_date,
+        "FilingDate":           _norm_date(challan_date),
         "Employer_EPF_AC01":    employer_epf_ac01,
         "Employer_EPS_AC10":    employer_eps_ac10,
         "Employer_EDLI_AC21":   employer_edli_ac21,
@@ -312,15 +340,22 @@ def parse_ptrc(pdf, fname: str) -> dict:
     tin_val = tin_m.group(1).strip() if tin_m else "Unknown"
 
     # ── Company name ──
-    name_m = re.search(
-        r"Name of the Employer\s+(.+?)(?:\s+Type of Return|\s+Periodicity|\n)",
-        full_text, re.IGNORECASE | re.DOTALL,
-    )
-    if name_m:
-        company_name = re.sub(r"\s+", " ", name_m.group(1)).strip()
-        # Clean prefix artefacts
-        company_name = re.sub(r"^M/?s\.?\s+", "", company_name).strip()
-    else:
+    # The PDF is two-column, so extract_text interleaves the name with the
+    # right-column "Type of Return / Original". Take the block between the last
+    # "Registration )" and "Periodicity", then strip the right-column noise.
+    m_end = re.search(r"Periodicity", full_text, re.IGNORECASE)
+    end_i = m_end.start() if m_end else len(full_text)
+    regs  = [mm.end() for mm in re.finditer(r"Registration\s*\)", full_text[:end_i], re.IGNORECASE)]
+    block = full_text[(regs[-1] if regs else 0):end_i]
+    for pat in (r"Type of Return", r"\(?\s*Select", r"appropriate\s*\)?",
+                r"\bOriginal\b", r"\bRevised\b", r"\bFresh\b", r"\bNil\b",
+                r"Name of the Employer"):
+        block = re.sub(pat, " ", block, flags=re.IGNORECASE)
+    block = re.sub(r"\b\d+\b", " ", block)             # drop stray box numbers
+    block = re.sub(r"[^A-Za-z&/.,\-() ]", " ", block)  # keep name characters only
+    company_name = re.sub(r"\s+", " ", block).strip()
+    company_name = re.sub(r"^M\s*/?\s*[Ss]\.?\s+", "", company_name).strip()  # drop M/s courtesy
+    if not company_name:
         company_name = "Unknown"
 
     # ── FY ──
@@ -328,55 +363,70 @@ def parse_ptrc(pdf, fname: str) -> dict:
     fy_str  = f"{fy_m.group(1)}-{fy_m.group(2)[-2:]}" if fy_m else "Unknown"
     fy_start = int(fy_m.group(1)) if fy_m else 0
 
-    # ── Period month + year ──
-    # Layout A: "Period of Return 2025 August"  (year first)
-    period_m_a = re.search(
-        r"Period of Return[^0-9a-zA-Z]*(\d{4})\s+([A-Za-z]+)",
-        full_text, re.IGNORECASE,
-    )
-    # Layout B: "Period of Return( ...) Nov 2025"  (month first)
-    period_m_b = re.search(
-        r"Period of Return[^0-9a-zA-Z]*([A-Za-z]{3,9})\s+(\d{4})",
-        full_text, re.IGNORECASE,
-    )
-
+    # ── Period (tax month) ──
+    # Most reliable anchor: box 6 "Period Covered by Return ... 01 <Mon> <Year>".
+    # (The "Period of Return" line has "( Select Appropriate )" between label and
+    #  value in some versions, and filenames are unreliable, so prefer box 6.)
     period_month, period_year = "Unknown", 0
+    cov = re.search(r"Period Covered by Return", full_text, re.IGNORECASE)
+    if cov:
+        dm = re.search(r"(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{4})", full_text[cov.end():cov.end() + 160])
+        if dm and dm.group(2).upper()[:3] in MONTH_INDICES:
+            period_month, period_year = dm.group(2), int(dm.group(3))
 
-    if period_m_a:
-        candidate_month = period_m_a.group(2).strip()
-        # Confirm it looks like a real month (not "appropriate" or junk)
-        if candidate_month.upper()[:3] in MONTH_INDICES:
-            period_year  = int(period_m_a.group(1))
-            period_month = candidate_month
-    
-    if period_month == "Unknown" and period_m_b:
-        candidate_month = period_m_b.group(1).strip()
-        if candidate_month.upper()[:3] in MONTH_INDICES:
-            period_month = candidate_month
-            period_year  = int(period_m_b.group(2))
-
-    # Last fallback: "From 01 Nov 2025"
+    # Fallbacks: "Period of Return ... 2025 August" (year first) / "... Dec 2025" (month first)
     if period_month == "Unknown":
-        from_m = re.search(r"From\s+\d+\s+([A-Za-z]+)\s+(\d{4})", full_text, re.IGNORECASE)
-        if from_m and from_m.group(1).upper()[:3] in MONTH_INDICES:
-            period_month = from_m.group(1).strip()
-            period_year  = int(from_m.group(2))
+        pr = re.search(r"Period of Return.*?(\d{4})\s+([A-Za-z]{3,9})", full_text, re.IGNORECASE)
+        if pr and pr.group(2).upper()[:3] in MONTH_INDICES:
+            period_year, period_month = int(pr.group(1)), pr.group(2)
+    if period_month == "Unknown":
+        pr = re.search(r"Period of Return.*?([A-Za-z]{3,9})\s+(\d{4})", full_text, re.IGNORECASE)
+        if pr and pr.group(1).upper()[:3] in MONTH_INDICES:
+            period_month, period_year = pr.group(1), int(pr.group(2))
 
     month_upper = period_month.upper()
-    # Recalculate fy_start from period year if available
     if period_year > 0:
         _, fy_start = _fy_from_month_year(month_upper, period_year)
 
     period_date = _period_date(month_upper, fy_start)
 
-    # ── Tax amounts — "Rs." or "Rs" followed by amount ──
-    def rs_val(pattern: str) -> float:
-        m = re.search(rf"{pattern}\s+Rs\.?\s*([\d,]+(?:\.\d+)?)", full_text, re.IGNORECASE)
+    # ── Tax amounts — label, then (any non-digit filler) then "Rs <amount>" ──
+    def rs_val(label: str) -> float:
+        m = re.search(rf"{label}.*?Rs\.?\s*([\d,]+(?:\.\d+)?)", full_text, re.IGNORECASE)
         return to_float(m.group(1)) if m else 0.0
 
     total_tax   = rs_val(r"Total Tax Payable")
-    net_payable = rs_val(r"Net amount payable")
-    pt_paid     = net_payable if net_payable > 0 else total_tax
+    net_payable = rs_val(r"Net amount payable")   # may sit after "/ refundable (-)"
+    # Profession-tax liability for the month is the headline figure.
+    pt_paid     = total_tax if total_tax > 0 else net_payable
+
+    # ── Registration / filing metadata ──
+    mvat_m   = re.search(r"MVAT\s*/\s*GSTN TIN[^\d]*(\d{8,})", full_text, re.IGNORECASE)
+    mvat_tin = mvat_m.group(1) if mvat_m else ""
+    type_m   = re.search(r"Type of Return[^\n]*?\b(Original|Revised|Fresh)\b", full_text, re.IGNORECASE)
+    type_of_return = type_m.group(1).title() if type_m else ""
+    txn_m    = re.search(r"Transaction\s*I[dD]\s+(\d+)", full_text, re.IGNORECASE)
+    doc_ref  = txn_m.group(1) if txn_m else ""
+    fil_m = (re.search(r"Date of Filing Return\D*(\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4})", full_text, re.IGNORECASE)
+             or re.search(r"submission of Return\s+([A-Za-z]{3,9}\s+\d{1,2},?\s*\d{4})", full_text, re.IGNORECASE))
+    filing_date = _norm_date(fil_m.group(1)) if fil_m else None
+
+    # ── Particulars: salary-slab breakup (present only in newer FORM III B) ──
+    # Each slab line ends with ... <TotalCount> <AmountOfTaxDeducted>; take the
+    # last two numbers (label digits like 7500/10000 sit earlier and are ignored).
+    def _slab(pat):
+        m = re.search(pat + r"[^\n]*", full_text, re.IGNORECASE)
+        if not m:
+            return 0.0, 0.0
+        vals = [to_float(n) for n in re.findall(r"[\d,]+(?:\.\d+)?", m.group(0))]
+        return (vals[-2], vals[-1]) if len(vals) >= 2 else (0.0, 0.0)
+
+    s1c, s1a = _slab(r"Do Not Exceed Rs\.?\s*7500")
+    s2c, s2a = _slab(r"Exceed Rs\.?\s*7500 but <=\s*Rs\.?\s*25000")
+    s3c, s3a = _slab(r"Exceed Rs\.?\s*7500 but <=\s*Rs\.?\s*10000")
+    s4c, s4a = _slab(r"Exceed Rs\.?\s*10,?000 for Male")
+    s5c, _   = _slab(r"Exempted U/s 27A")
+    total_employees = s1c + s2c + s3c + s4c
 
     return {
         "ReturnType":        "PTRC",
@@ -389,6 +439,18 @@ def parse_ptrc(pdf, fname: str) -> dict:
         "PT Paid":           pt_paid,
         "PeriodDate":        period_date,
         "Month":             period_month,
+        # registration / filing metadata
+        "MVAT_TIN":          mvat_tin,
+        "Type of Return":    type_of_return,
+        "DocRef":            doc_ref,
+        "FilingDate":        filing_date,
+        # particulars breakup (salary slabs)
+        "Slab_UpTo7500_Count":     s1c, "Slab_UpTo7500_Amt":     s1a,
+        "Slab_7500to25000F_Count": s2c, "Slab_7500to25000F_Amt": s2a,
+        "Slab_7500to10000M_Count": s3c, "Slab_7500to10000M_Amt": s3a,
+        "Slab_Above10000_Count":   s4c, "Slab_Above10000_Amt":   s4a,
+        "Slab_Exempt27A_Count":    s5c,
+        "Total_Employees":         total_employees,
     }
 
 
@@ -431,6 +493,8 @@ def parse_esic(pdf, fname: str) -> dict:
         "Amount":        amount_paid,
         "ChallanNumber": challan_num,
         "ChallanDate":   date_str,
+        "DocRef":        challan_num,
+        "FilingDate":    _norm_date(date_str),
         "PeriodDate":    _period_date(month_upper, fy_start),
         "Month":         month_val,
     }

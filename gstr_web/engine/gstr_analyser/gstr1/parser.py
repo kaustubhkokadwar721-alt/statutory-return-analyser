@@ -2,6 +2,7 @@
 
 import os
 import re
+import contextlib
 
 import pandas as pd
 import pdfplumber
@@ -166,11 +167,16 @@ def build_table_coverage(section_totals: pd.DataFrame) -> pd.DataFrame:
     ]]
 
 
-def parse_gstr1(pdf_path: str, error_log: list) -> dict | None:
-    """Open and parse a GSTR-1 PDF. Append a friendly error row on failure."""
+def parse_gstr1(pdf_path: str, error_log: list, pdf=None) -> dict | None:
+    """Open and parse a GSTR-1 PDF. Append a friendly error row on failure.
+
+    Reuses an already-open pdfplumber ``pdf`` when the unified pipeline passes
+    one (opened once for detection); the caller keeps ownership.
+    """
     fname = os.path.basename(pdf_path)
     try:
-        with pdfplumber.open(pdf_path) as pdf:
+        _own = pdf is None
+        with (pdfplumber.open(pdf_path) if _own else contextlib.nullcontext(pdf)) as pdf:
             if not pdf.pages:
                 raise ValueError("PDF has no pages.")
 
