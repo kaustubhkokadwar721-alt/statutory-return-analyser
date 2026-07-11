@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Statutory Return Analyser</title>
-<meta name="description" content="Parse GSTR-1, GSTR-3B, TDS, PF, ESIC and PTRC return PDFs into clean, verified CSV ledgers, entirely in your browser.">
+<meta name="description" content="Parse GSTR-1, GSTR-3B, TDS, PF, ESIC, PTRC and ICEGATE Shipping Bill PDFs into clean, verified CSV ledgers, entirely in your browser.">
 <link rel="stylesheet" href="themes/prime.css">
 </head>
 <body>
@@ -16,8 +16,8 @@
     <div class="eyebrow">For audit working papers</div>
     <h1 class="title">Statutory Return <em>Analyser</em></h1>
     <p class="lede">Drop your return PDFs. Get verified ledgers and a compliance overview, parsed entirely on this device.</p>
-    <ul class="supports" aria-label="Return types handled">
-      <li>GSTR-1</li><li>GSTR-3B</li><li>TDS (281)</li><li>PF ECR</li><li>ESIC</li><li>PTRC</li>
+    <ul class="supports" aria-label="Document types handled">
+      <li>GSTR-1</li><li>GSTR-3B</li><li>TDS (281)</li><li>PF ECR</li><li>ESIC</li><li>PTRC</li><li>Shipping Bill</li>
     </ul>
     <div class="statusbar">
       <span class="dot busy" id="dot"></span>
@@ -29,11 +29,12 @@
   <section class="sec" data-sec="documents">
     <div class="sec-head"><span class="sec-kicker">Documents</span></div>
     <div class="card drop-card">
-      <div id="drop" class="drop">
+      <div id="drop" class="drop" role="button" tabindex="0" aria-label="Drop PDFs here or press Enter to browse">
         <div class="drop-big">Drop PDFs here</div>
-        <div class="drop-small">GSTR-1 · GSTR-3B · TDS · PF · ESIC · PTRC · click to browse</div>
+        <div class="drop-small">GSTR-1 · GSTR-3B · TDS · PF · ESIC · PTRC · Shipping Bill · click to browse</div>
         <input type="file" id="picker" accept="application/pdf" multiple hidden>
       </div>
+      <div id="filesBar" class="files-bar"></div>
       <div id="files" class="files"></div>
     </div>
   </section>
@@ -60,9 +61,13 @@
   <section class="sec" data-sec="records" id="recPanel" style="display:none">
     <div class="sec-head">
       <span class="sec-kicker">Records</span>
+      <span class="count" id="recCount" aria-live="polite"></span>
       <label class="flagtoggle"><input type="checkbox" id="flaggedOnly"> Flagged only</label>
     </div>
-    <div class="card"><div id="recTable" class="tbl-wrap"></div></div>
+    <div class="card">
+      <div id="badFiles"></div>
+      <div id="recTable" class="tbl-wrap tall"></div>
+    </div>
   </section>
 
   <!-- ===== 05 Ledgers (results) ===== -->

@@ -119,15 +119,45 @@ body {
 .drop:hover, .drop.over { border-color: var(--accent); background: var(--panel-2); }
 .drop-big { font-family: var(--font-display); font-size: 22px; font-weight: 500; color: var(--ink); }
 .drop-small { margin-top: 8px; font-size: 12.5px; color: var(--ink-faint); letter-spacing: .01em; }
-.files { display: flex; flex-direction: column; gap: 1px; margin-top: 18px; }
+.files-bar {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+  margin-top: 18px;
+}
+.files-bar:empty { display: none; }
+.files-n { font-size: 12px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.clear-all {
+  appearance: none; background: none; border: none; padding: 0; cursor: pointer;
+  font-family: var(--font-body); font-size: 11px; font-weight: 600; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--ink-soft); text-decoration: underline;
+  text-underline-offset: 3px; text-decoration-color: var(--rule);
+}
+.clear-all:hover { color: var(--red); text-decoration-color: currentColor; }
+.clear-all:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.files { display: flex; flex-direction: column; gap: 1px; margin-top: 10px; }
 .files:empty { display: none; }
 .f {
-  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  display: flex; align-items: center; gap: 12px;
   padding: 9px 12px; background: var(--panel-2); border: 1px solid var(--rule-soft);
   font-size: 13px;
 }
-.f .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.f .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .f .sz { color: var(--ink-faint); font-variant-numeric: tabular-nums; flex: none; }
+.f .rm {
+  appearance: none; flex: none; cursor: pointer; background: none; border: none;
+  width: 22px; height: 22px; line-height: 1; border-radius: var(--radius-sm);
+  color: var(--ink-faint); font-size: 15px; padding: 0;
+  transition: color .15s var(--ease), background .15s var(--ease);
+}
+.f .rm:hover { color: var(--red); background: var(--sink); }
+.f .rm:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* detected-type tag, filled in after a run */
+.ftag {
+  flex: none; font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+  padding: 2px 8px; border-radius: 100px; border: 1px solid currentColor; color: var(--ink-faint);
+}
+.ftag.ok { color: var(--green); }
+.ftag.review { color: var(--amber); }
+.ftag.error, .ftag.err { color: var(--red); }
 
 /* ---- Run + log ---- */
 .run-card { display: flex; flex-direction: column; gap: 16px; }
@@ -164,6 +194,9 @@ body {
 
 /* ---- Tables ---- */
 .tbl-wrap { overflow-x: auto; }
+/* long records lists scroll under a sticky header instead of stretching the page */
+.tbl-wrap.tall { max-height: 62vh; overflow-y: auto; }
+.tbl-wrap.tall thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
 .tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tbl th {
   text-align: left; font-size: 10.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
@@ -178,6 +211,7 @@ body {
 .tbl .flags { color: var(--ink-soft); font-size: 12px; white-space: normal; }
 .tbl .ell { max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
 .tbl .src { color: var(--ink-faint); }
+.tbl .ref { max-width: 130px; font-variant-numeric: tabular-nums; color: var(--ink-soft); }
 
 /* ---- Status pills (colour + text label, never colour alone) ---- */
 .pill {
@@ -187,6 +221,28 @@ body {
 .pill.ok     { color: var(--green); background: oklch(0.520 0.098 155 / .08); }
 .pill.review { color: var(--amber); background: oklch(0.555 0.115 68 / .12); }
 .pill.error  { color: var(--red);   background: oklch(0.505 0.155 26 / .09); }
+
+/* ---- Records count in the section head ---- */
+.count { font-size: 11.5px; color: var(--ink-faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ---- Unreadable-files list above the records table ---- */
+#badFiles:not(:empty) { margin-bottom: 18px; }
+.bad-head {
+  font-size: 10.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--ink-faint); padding-bottom: 8px; border-bottom: 1.5px solid var(--rule);
+}
+.bad {
+  display: flex; align-items: baseline; gap: 12px; padding: 9px 0;
+  border-bottom: 1px solid var(--rule-soft); font-size: 12.5px;
+}
+.bad .pill { flex: none; }
+.bad-nm { flex: none; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bad-why { color: var(--ink-soft); }
+
+/* ---- Clickable KPI (Review / Errors jump to flagged records) ---- */
+.kpi.clickable { cursor: pointer; transition: background .15s var(--ease); }
+.kpi.clickable:hover { background: var(--panel-2); }
+.kpi.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* ---- Flagged-only toggle ---- */
 .flagtoggle {

@@ -55,28 +55,66 @@ function maybeEnableRun() {
 }
 
 // ---- file selection ----
+let fileTags = {};  // name -> {type, status} once parsed
+
 async function addFiles(fileList) {
   for (const f of fileList) {
     if (!f.name.toLowerCase().endsWith(".pdf")) continue;
     const bytes = new Uint8Array(await f.arrayBuffer());
     pickedFiles = pickedFiles.filter((p) => p.name !== f.name);
     pickedFiles.push({ name: f.name, bytes });
+    delete fileTags[f.name];
   }
   renderFiles();
   maybeEnableRun();
 }
 
+function removeFile(name) {
+  pickedFiles = pickedFiles.filter((p) => p.name !== name);
+  delete fileTags[name];
+  renderFiles();
+  maybeEnableRun();
+}
+
 function renderFiles() {
+  const bar = document.getElementById("filesBar");
+  if (!pickedFiles.length) {
+    bar.innerHTML = "";
+    filesEl.innerHTML = "";
+    return;
+  }
+  const totalBytes = pickedFiles.reduce((s, f) => s + f.bytes.length, 0);
+  bar.innerHTML =
+    `<span class="files-n">${pickedFiles.length} document${pickedFiles.length > 1 ? "s" : ""} · ${fmtSize(totalBytes)}</span>` +
+    `<button type="button" class="clear-all" id="clearAll">Clear all</button>`;
+  bar.querySelector("#clearAll").addEventListener("click", () => {
+    pickedFiles = []; fileTags = {};
+    renderFiles(); maybeEnableRun();
+  });
+
   filesEl.innerHTML = "";
   for (const f of pickedFiles) {
+    const tag = fileTags[f.name];
     const div = document.createElement("div");
     div.className = "f";
-    div.innerHTML = `<span class="nm">${f.name}</span><span class="sz">${fmtSize(f.bytes.length)}</span>`;
+    const tagHtml = tag
+      ? (tag.status === "unreadable"
+          ? `<span class="ftag err">unreadable</span>`
+          : `<span class="ftag ${(tag.status || "").toLowerCase()}">${esc(tag.type)}</span>`)
+      : "";
+    div.innerHTML =
+      `<span class="nm" title="${esc(f.name)}">${esc(f.name)}</span>${tagHtml}` +
+      `<span class="sz">${fmtSize(f.bytes.length)}</span>` +
+      `<button type="button" class="rm" aria-label="Remove ${esc(f.name)}">&times;</button>`;
+    div.querySelector(".rm").addEventListener("click", () => removeFile(f.name));
     filesEl.appendChild(div);
   }
 }
 
 dropEl.addEventListener("click", () => picker.click());
+dropEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); picker.click(); }
+});
 picker.addEventListener("change", (e) => addFiles(e.target.files));
 ["dragover", "dragenter"].forEach((ev) =>
   dropEl.addEventListener(ev, (e) => { e.preventDefault(); dropEl.classList.add("over"); }));
@@ -159,6 +197,16 @@ json.dumps(files_list)
       consolidated = parseCSV(FS.readFile("/work/out/All_Returns_Consolidated.csv", { encoding: "utf8" }));
       dashboard    = readMaybe(FS, "/work/out/Dashboard_Summary.csv");
       parseErrors  = readMaybe(FS, "/work/out/Parsing_Errors.csv");
+
+      // tag each picked file with its detected type / outcome
+      fileTags = {};
+      for (const r of consolidated) {
+        if (!fileTags[r.SourceFile] || r.Status !== "OK")
+          fileTags[r.SourceFile] = { type: r.ReturnType, status: r.Status };
+      }
+      for (const e2 of parseErrors) fileTags[e2.File] = { type: "", status: "unreadable" };
+      renderFiles();
+
       renderDashboard();
     } catch (e) {
       console.warn("Dashboard render skipped:", e);
@@ -218,17 +266,30 @@ function renderDashboard() {
   const failed = parseErrors.length;
   const by = (s) => consolidated.filter((r) => r.Status === s).length;
   const liab = consolidated.reduce((s, r) => s + (Number(r.PrimaryAmount) || 0), 0);
+  const flaggable = by("Review") + by("Error") > 0;
   const kpis = [
-    ["Documents", n + failed, ""],
-    ["Clean", by("OK"), "ok"],
-    ["Review", by("Review"), "review"],
-    ["Errors", by("Error"), "error"],
+    ["Documents", n + failed, "", false],
+    ["Clean", by("OK"), "ok", false],
+    ["Review", by("Review"), "review", flaggable],
+    ["Errors", by("Error"), "error", flaggable],
   ];
-  if (failed) kpis.push(["Unreadable", failed, "error"]);
-  kpis.push(["Total value ₹", money(liab), ""]);
+  if (failed) kpis.push(["Unreadable", failed, "error", false]);
+  kpis.push(["Total value ₹", money(liab), "", false]);
   document.getElementById("kpis").innerHTML = kpis
-    .map(([l, v, c]) => `<div class="kpi ${c}"><div class="kpi-v">${v}</div><div class="kpi-l">${l}</div></div>`)
+    .map(([l, v, c, click]) =>
+      `<div class="kpi ${c}${click ? " clickable" : ""}"${click ? ` role="button" tabindex="0" data-filter="1" aria-label="Show flagged records"` : ""}>` +
+      `<div class="kpi-v">${v}</div><div class="kpi-l">${l}</div></div>`)
     .join("");
+  // clicking Review / Errors jumps to the flagged records
+  document.querySelectorAll(".kpi.clickable").forEach((el) => {
+    const go = () => {
+      document.getElementById("flaggedOnly").checked = true;
+      renderRecords();
+      document.getElementById("recPanel").scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+    el.addEventListener("click", go);
+    el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
+  });
   document.getElementById("dashTable").innerHTML = dashTableHTML();
   renderRecords();
   document.getElementById("dashPanel").style.display = "block";
@@ -249,11 +310,28 @@ function dashTableHTML() {
   return `<table class="tbl"><thead><tr>${head.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
+const STATUS_RANK = { Error: 0, Review: 1, OK: 2 };
+
 function renderRecords() {
   const flaggedOnly = document.getElementById("flaggedOnly").checked;
   let rows = consolidated.slice();
+  const flagged = rows.filter((r) => r.Status !== "OK").length;
   if (flaggedOnly) rows = rows.filter((r) => r.Status !== "OK");
-  const head = ["", "Return", "Entity", "FY", "Period", "Value ₹", "Flags", "Source"];
+
+  // exceptions first: the reviewer should never hunt for the row that needs attention
+  rows.sort((a, b) =>
+    (STATUS_RANK[a.Status] ?? 3) - (STATUS_RANK[b.Status] ?? 3) ||
+    String(a.ReturnType).localeCompare(b.ReturnType) ||
+    String(a.FY).localeCompare(b.FY) ||
+    (Number(a.MonthIndex) || 0) - (Number(b.MonthIndex) || 0));
+
+  const cnt = document.getElementById("recCount");
+  cnt.textContent = flaggedOnly
+    ? `${rows.length} flagged of ${consolidated.length}`
+    : `${consolidated.length} record${consolidated.length !== 1 ? "s" : ""}` +
+      (flagged ? ` · ${flagged} flagged` : " · all clean");
+
+  const head = ["", "Return", "Entity", "FY", "Period", "Ref", "Value ₹", "Flags", "Source"];
   const body = rows.map((r) => {
     const st = (r.Status || "").toLowerCase();
     return `<tr>
@@ -262,12 +340,27 @@ function renderRecords() {
       <td class="ell" title="${esc(r.EntityName)} (${esc(r.EntityID)})">${esc(r.EntityID)}</td>
       <td>${esc(r.FY)}</td>
       <td>${esc(period(r))}</td>
+      <td class="ell ref" title="${esc(r.DocRef)}">${esc(r.DocRef || "—")}</td>
       <td class="num">${money(r.PrimaryAmount)}</td>
       <td class="flags">${esc(r.Flags)}</td>
       <td class="ell src" title="${esc(r.SourceFile)}">${esc(r.SourceFile)}</td></tr>`;
   }).join("");
   document.getElementById("recTable").innerHTML =
     `<table class="tbl rec"><thead><tr>${head.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table>`;
+
+  renderBadFiles();
+}
+
+function renderBadFiles() {
+  const el = document.getElementById("badFiles");
+  if (!parseErrors.length) { el.innerHTML = ""; return; }
+  el.innerHTML =
+    `<div class="bad-head">Not parsed (${parseErrors.length})</div>` +
+    parseErrors.map((e) => `<div class="bad">
+        <span class="pill error">Unreadable</span>
+        <span class="bad-nm" title="${esc(e.File)}">${esc(e.File)}</span>
+        <span class="bad-why">${esc(e.Message)}</span>
+      </div>`).join("");
 }
 
 document.getElementById("flaggedOnly").addEventListener("change", renderRecords);

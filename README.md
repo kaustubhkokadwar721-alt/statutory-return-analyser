@@ -1,8 +1,8 @@
 # Statutory Return Analyser
 
-Turn statutory-return PDFs — **GSTR-1, GSTR-3B, TDS (ITNS-281), PF ECR, ESIC, PTRC** —
-into clean, verified CSV ledgers with a compliance overview, **entirely in your browser**.
-No upload, no server, no install.
+Turn statutory-return PDFs — **GSTR-1, GSTR-3B, TDS (ITNS-281), PF ECR, ESIC, PTRC,
+and ICEGATE Shipping Bills** — into clean, verified CSV ledgers with a compliance
+overview, **entirely in your browser**. No upload, no server, no install.
 
 ### ▶ Use it now (one click)
 
@@ -24,21 +24,28 @@ from disk for a fully air-gapped run.
 
 ## What you get
 
-Drop any mix of the six return types. The engine detects each one and produces:
+Drop any mix of the seven document types. The engine detects each one and produces:
 
 | Output | Contents |
 |--------|----------|
-| **Overview** (on screen) | KPI cards (documents, clean / review / error), a per-return × FY summary, and a records table with status pills |
+| **Overview** (on screen) | KPI cards (documents, clean / review / error), a per-return × FY summary, and an exceptions-first records table with status pills |
 | **All_Returns_Consolidated.csv** | Every return on one normalized schema — pivot / SUMIFS ready |
 | **Dashboard_Summary.csv** | Filing counts, pass rates, and totals grouped by return type and FY |
 | **`<type>`_Details.csv** | Full parsed fields per return type |
+| **SB_Items.csv** | Shipping-bill line items — HS code, description, quantity, rate, FOB — one row per item across all bills |
 
 Each row carries a **Status** (OK / Review / Error), the **Flags** that triggered it, the
 headline amount, plus traceability metadata: source filename, document reference
-(ARN / challan / TRRN / transaction id), and filing date. Sanity checks include GSTR-3B
+(ARN / challan / TRRN / SB number), and filing date. Sanity checks include GSTR-3B
 RCM cross-checks and CGST/SGST symmetry, TDS component tie-outs, PF contribution
 reconciliation, and PTRC period validation. PTRC also breaks out the salary-slab
 particulars where the form version prints them.
+
+Shipping bills get the deepest verification: declared invoice / item / container counts
+are checked against what was parsed, the FOB total against the sum of item-level FOB
+values, and drawback & RODTEP claims against their per-item rows — so a bill only
+shows **OK** when its own arithmetic ties out. Scanned (image-only) shipping bills are
+surfaced as *Unreadable* with instructions to OCR them first.
 
 ## Design
 

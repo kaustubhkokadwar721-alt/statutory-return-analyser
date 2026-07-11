@@ -13,12 +13,17 @@ from .gstr1.checks import run_sanity_checks_gstr1
 from .gstr3b.parser import parse_complete_gstr3b
 from .gstr3b.checks import run_sanity_checks_gstr3b
 from .compliance_parsers import parse_esic, parse_pf, parse_ptrc, parse_tds
+from .shipping_bill import parse_shipping_bill, sb_flat_row, sb_item_rows
 
 
 # ── Return-type detection ─────────────────────────────────────────────────────
 
 def detect_return_type(text: str) -> str:
     t = text.upper()
+
+    # Customs export documents — ICEGATE shipping bill
+    if "INDIAN CUSTOMS EDI SYSTEM" in t or "SHIPPING BILL SUMMARY" in t:
+        return "SB"
 
     # GSTR forms — very specific markers
     if "GSTR-3B" in t or "GSTR3B" in t:
@@ -99,7 +104,8 @@ def run_unified_pipeline(
 
     records = []          # unified contract rows
     errors  = []          # failed files
-    raw_details = {k: [] for k in ("GSTR1", "GSTR3B", "ESIC", "PF", "PTRC", "TDS")}
+    raw_details = {k: [] for k in ("GSTR1", "GSTR3B", "ESIC", "PF", "PTRC", "TDS", "SB")}
+    sb_items = []         # shipping-bill line items (separate ledger)
 
     for idx, fpath in enumerate(pdf_files, 1):
         fname = os.path.basename(fpath)
@@ -349,11 +355,62 @@ def run_unified_pipeline(
                     })
                     raw_details["TDS"].append(res)
 
+                # ── Shipping Bill (ICEGATE) ───────────────────────────────
+                elif return_type == "SB":
+                    doc = parse_shipping_bill(pdf, fname)
+
+                    checks = doc.get("validation", {}).get("checks", [])
+                    failed = [c["check"] for c in checks if c["ok"] is False]
+                    flags_list = list(failed)
+                    if any(w.startswith("missing core fields")
+                           for w in doc.get("warnings", [])):
+                        flags_list.append("FIELDS?")
+                    flags  = "; ".join(flags_list)
+                    status = "Review" if flags_list else "OK"
+
+                    pd_date = None
+                    try:
+                        pd_date = pd.to_datetime(doc.get("sb_date"),
+                                                 format="%d-%b-%y")
+                    except Exception:
+                        pass
+                    fy = "Unknown"
+                    if pd_date is not None:
+                        y = pd_date.year if pd_date.month >= 4 else pd_date.year - 1
+                        fy = f"{y}-{str(y + 1)[-2:]}"
+
+                    leo = ((doc.get("process") or {}).get("leo") or {})
+                    records.append({
+                        "ReturnType":    "SB",
+                        "EntityID":      doc.get("iec", "Unknown"),
+                        "EntityName":    (doc.get("exporter") or {}).get("name", "Unknown"),
+                        "FY":            fy,
+                        "PeriodDate":    _fmt_date(pd_date),
+                        "MonthName":     pd_date.strftime("%B") if pd_date is not None else "Unknown",
+                        "MonthIndex":    _month_idx(pd_date),
+                        "Status":        status,
+                        "Flags":         flags,
+                        "PrimaryAmount": doc.get("fob_value_inr") or 0.0,
+                        "DocRef":        doc.get("sb_no", ""),
+                        "FilingDate":    leo.get("date"),
+                        "SourceFile":    fname,
+                    })
+                    flat = sb_flat_row(doc)
+                    flat["SourceFile"] = fname
+                    raw_details["SB"].append(flat)
+                    for row in sb_item_rows(doc):
+                        row["SourceFile"] = fname
+                        sb_items.append(row)
+
                 else:
+                    scanned = not first_text.strip()
                     errors.append({
                         "File":       fname,
-                        "Error_Type": "UnknownType",
-                        "Message":    "Could not identify return type from PDF text.",
+                        "Error_Type": "NoTextLayer" if scanned else "UnknownType",
+                        "Message":    ("No text layer — this looks like a scanned "
+                                       "document; OCR it first (e.g. Adobe / "
+                                       "ilovepdf OCR) and re-drop.") if scanned
+                                      else "Could not identify return type from PDF text.",
                         "Action":     "Skipped.",
                     })
 
@@ -465,6 +522,17 @@ def run_unified_pipeline(
             "desc":  f"Raw parsed fields for {rtype} returns.",
             "filename": f"{rtype}_Details.csv",
             "path": path_det,
+        })
+
+    if sb_items:
+        df_items = pd.DataFrame(sb_items)
+        path_items = os.path.join(output_dir, "SB_Items.csv")
+        df_items.to_csv(path_items, index=False)
+        output_files.append({
+            "label": "Shipping Bill Items",
+            "desc":  "Line items across all shipping bills — HS code, qty, FOB.",
+            "filename": "SB_Items.csv",
+            "path": path_items,
         })
 
     if errors:
