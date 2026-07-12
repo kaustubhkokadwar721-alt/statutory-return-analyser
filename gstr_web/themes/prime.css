@@ -17,12 +17,12 @@
 @font-face { font-family:'Hanken Grotesk'; src:url('../fonts/HankenGrotesk-600-normal-latin.woff2') format('woff2'); font-weight:600; font-style:normal; font-display:swap; }
 
 :root {
-  /* ledger stock */
-  --bg:        oklch(0.972 0.009 85);            /* warm paper */
-  --bg-deep:   oklch(0.955 0.012 85);
-  --panel:     oklch(0.995 0.004 90);            /* fresh sheet */
-  --panel-2:   oklch(0.965 0.010 85);            /* zebra / hover */
-  --sink:      oklch(0.955 0.012 85);            /* inset wells */
+  /* clean sheet with the faintest warm cast */
+  --bg:        oklch(0.986 0.005 90);
+  --bg-deep:   oklch(0.970 0.008 88);
+  --panel:     oklch(1 0 0);                     /* pure white card */
+  --panel-2:   oklch(0.972 0.007 88);            /* zebra / hover */
+  --sink:      oklch(0.978 0.006 90);            /* inset wells */
   /* ink ramp — warm blue-black, like fountain-pen ink on cream */
   --ink:       oklch(0.245 0.020 265);
   --ink-soft:  oklch(0.44 0.022 265);
@@ -37,14 +37,14 @@
   --ok:        var(--green);
   --amber:     oklch(0.555 0.115 68);
   --red:       oklch(0.505 0.155 26);
-  /* document-type hues — the identity system */
-  --t-gstr1:   oklch(0.46 0.095 170);
-  --t-gstr3b:  oklch(0.46 0.100 265);
-  --t-tds:     oklch(0.47 0.115 25);
-  --t-pf:      oklch(0.50 0.100 70);
-  --t-esic:    oklch(0.47 0.100 235);
-  --t-ptrc:    oklch(0.46 0.100 320);
-  --t-sb:      oklch(0.46 0.095 205);
+  /* document-type hues — deep (text/strokes) + saturated (filled plates) */
+  --t-gstr1:   oklch(0.46 0.095 170);  --s-gstr1:  oklch(0.56 0.115 170);
+  --t-gstr3b:  oklch(0.46 0.100 265);  --s-gstr3b: oklch(0.53 0.140 265);
+  --t-tds:     oklch(0.47 0.115 25);   --s-tds:    oklch(0.55 0.150 25);
+  --t-pf:      oklch(0.50 0.100 70);   --s-pf:     oklch(0.62 0.125 70);
+  --t-esic:    oklch(0.47 0.100 235);  --s-esic:   oklch(0.55 0.125 235);
+  --t-ptrc:    oklch(0.46 0.100 320);  --s-ptrc:   oklch(0.54 0.135 320);
+  --t-sb:      oklch(0.46 0.095 205);  --s-sb:     oklch(0.56 0.115 205);
   /* structure */
   --rule:      oklch(0.875 0.015 85);
   --rule-soft: oklch(0.925 0.012 85);
@@ -62,9 +62,7 @@
 html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
-  background:
-    repeating-linear-gradient(0deg, transparent 0 31px, oklch(0.60 0.04 240 / .045) 31px 32px),
-    var(--bg);
+  background: var(--bg);
   color: var(--ink);
   font-family: var(--font-body);
   font-size: 14px;
@@ -75,10 +73,10 @@ body {
 
 /* file-folder edge: the seven type hues, always present, top of page */
 .edge {
-  position: fixed; inset: 0 0 auto 0; height: 5px; z-index: 10;
+  position: fixed; inset: 0 0 auto 0; height: 4px; z-index: 10;
   background: linear-gradient(90deg,
-    var(--t-gstr1) 0 14.28%, var(--t-gstr3b) 0 28.57%, var(--t-tds) 0 42.85%,
-    var(--t-pf) 0 57.14%, var(--t-esic) 0 71.42%, var(--t-ptrc) 0 85.71%, var(--t-sb) 0 100%);
+    var(--s-gstr1) 0 14.28%, var(--s-gstr3b) 0 28.57%, var(--s-tds) 0 42.85%,
+    var(--s-pf) 0 57.14%, var(--s-esic) 0 71.42%, var(--s-ptrc) 0 85.71%, var(--s-sb) 0 100%);
 }
 
 .wrap { max-width: var(--maxw); margin: 0 auto; padding: clamp(30px, 5vw, 56px) clamp(20px, 4vw, 40px) 36px; }
@@ -166,53 +164,74 @@ body {
 
 /* ---- Document-type tile grid: the identity ---- */
 .types {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 8px;
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px;
   list-style: none; margin: 0 0 20px; padding: 0;
 }
 .type {
-  --t: var(--ink);
-  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
-  padding: 12px 12px 10px; border-radius: var(--radius-sm);
-  background: color-mix(in oklch, var(--t) 7%, var(--panel));
-  border: 1px solid color-mix(in oklch, var(--t) 22%, var(--panel));
+  --t: var(--ink); --s: var(--ink);
+  display: flex; flex-direction: column; align-items: center; text-align: center; gap: 1px;
+  padding: 14px 8px 11px; border-radius: var(--radius);
+  background: var(--panel);
+  border: 1px solid var(--rule-soft);
+  box-shadow: var(--shadow-sm);
+  transition: transform .16s var(--ease), box-shadow .16s var(--ease), border-color .16s var(--ease);
   animation: rise .45s var(--ease) both;
 }
+.type:hover { transform: translateY(-2px); box-shadow: var(--shadow); border-color: color-mix(in oklch, var(--s) 35%, var(--panel)); }
 .type:nth-child(1) { animation-delay: .03s } .type:nth-child(2) { animation-delay: .06s }
 .type:nth-child(3) { animation-delay: .09s } .type:nth-child(4) { animation-delay: .12s }
 .type:nth-child(5) { animation-delay: .15s } .type:nth-child(6) { animation-delay: .18s }
 .type:nth-child(7) { animation-delay: .21s }
-.type svg {
-  width: 26px; height: 26px; margin-bottom: 6px;
-  fill: none; stroke: var(--t); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round;
+/* filled icon plate — the saturated identity block */
+.tplate {
+  width: 42px; height: 42px; margin-bottom: 9px; flex: none;
+  display: grid; place-items: center; border-radius: 11px;
+  background: var(--s);
+  box-shadow: inset 0 -2px 0 oklch(0 0 0 / .14), 0 2px 6px color-mix(in oklch, var(--s) 35%, transparent);
+}
+.tplate svg {
+  width: 24px; height: 24px;
+  fill: none; stroke: oklch(0.99 0.005 90); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
 }
 .type b { font-size: 12.5px; font-weight: 600; color: var(--ink); letter-spacing: .01em; }
-.type i { font-style: normal; font-size: 10.5px; color: var(--ink-faint); }
-.t-gstr1  { --t: var(--t-gstr1) }  .t-gstr3b { --t: var(--t-gstr3b) }
-.t-tds    { --t: var(--t-tds) }    .t-pf     { --t: var(--t-pf) }
-.t-esic   { --t: var(--t-esic) }   .t-ptrc   { --t: var(--t-ptrc) }
-.t-sb     { --t: var(--t-sb) }
+.type i { font-style: normal; font-size: 10px; color: var(--ink-faint); }
+.t-gstr1  { --t: var(--t-gstr1); --s: var(--s-gstr1) }
+.t-gstr3b { --t: var(--t-gstr3b); --s: var(--s-gstr3b) }
+.t-tds    { --t: var(--t-tds); --s: var(--s-tds) }
+.t-pf     { --t: var(--t-pf); --s: var(--s-pf) }
+.t-esic   { --t: var(--t-esic); --s: var(--s-esic) }
+.t-ptrc   { --t: var(--t-ptrc); --s: var(--s-ptrc) }
+.t-sb     { --t: var(--t-sb); --s: var(--s-sb) }
+@media (max-width: 880px) {
+  .types { display: flex; flex-wrap: wrap; }
+  .type { flex-direction: row; text-align: left; padding: 8px 14px 8px 8px; gap: 9px; }
+  .tplate { width: 32px; height: 32px; margin: 0; border-radius: 8px; }
+  .tplate svg { width: 18px; height: 18px; }
+  .type i { display: none; }
+}
 
 /* ---- Drop zone: the hero ---- */
 .drop {
   position: relative;
-  border: 1.5px dashed color-mix(in oklch, var(--ink) 30%, var(--panel));
-  border-radius: var(--radius-sm);
-  background: var(--sink);
-  padding: 40px 24px 36px; text-align: center; cursor: pointer;
+  border: 2px dashed color-mix(in oklch, var(--green) 45%, var(--panel));
+  border-radius: var(--radius);
+  background: color-mix(in oklch, var(--green) 3%, var(--panel));
+  padding: 42px 24px 38px; text-align: center; cursor: pointer;
   transition: border-color .18s var(--ease), background .18s var(--ease), transform .18s var(--ease);
 }
-.drop:hover, .drop.over { border-color: var(--green); background: color-mix(in oklch, var(--green) 5%, var(--sink)); }
+.drop:hover, .drop.over { border-color: var(--green); background: color-mix(in oklch, var(--green) 7%, var(--panel)); }
 .drop.over { transform: scale(1.004); }
 .drop:focus-visible { outline: 2px solid var(--green); outline-offset: 3px; }
 .drop-ic {
-  width: 54px; height: 54px; margin: 0 auto 14px; display: grid; place-items: center;
-  background: var(--panel); border: 1px solid var(--rule); border-radius: 50%;
-  box-shadow: var(--shadow-sm);
+  width: 56px; height: 56px; margin: 0 auto 14px; display: grid; place-items: center;
+  background: var(--green); border-radius: 50%;
+  box-shadow: inset 0 -2px 0 oklch(0 0 0 / .15), 0 3px 10px color-mix(in oklch, var(--green) 40%, transparent);
+  transition: transform .18s var(--ease);
 }
-.drop-ic svg { width: 26px; height: 26px; fill: none; stroke: var(--green-2); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.drop:hover .drop-ic svg { stroke: var(--green); }
-.drop-big { font-family: var(--font-display); font-size: 25px; font-weight: 600; color: var(--ink); }
-.drop-small { margin-top: 7px; font-size: 12.5px; color: var(--ink-faint); letter-spacing: .01em; }
+.drop:hover .drop-ic, .drop.over .drop-ic { transform: translateY(-2px); }
+.drop-ic svg { width: 26px; height: 26px; fill: none; stroke: oklch(0.99 0.005 90); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.drop-big { font-family: var(--font-display); font-size: 26px; font-weight: 600; color: var(--ink); }
+.drop-small { margin-top: 7px; font-size: 12.5px; color: var(--ink-soft); letter-spacing: .01em; }
 
 /* ---- Picked files ---- */
 .files-bar {
@@ -248,16 +267,15 @@ body {
 .f .rm:focus-visible { outline: 2px solid var(--green); outline-offset: 1px; }
 /* detected-type badge: glyph in its hue, filled after a run */
 .ftag {
-  --t: var(--ink-faint);
-  flex: none; display: inline-flex; align-items: center; gap: 5px;
+  flex: none; display: inline-flex; align-items: center; gap: 6px;
   font-size: 10px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase;
-  padding: 3px 9px 3px 6px; border-radius: 100px;
-  color: var(--t);
-  background: color-mix(in oklch, var(--t) 9%, var(--panel));
-  border: 1px solid color-mix(in oklch, var(--t) 30%, var(--panel));
+  padding: 3px 9px 3px 5px; border-radius: 100px;
+  color: var(--t, var(--ink-faint));
+  background: color-mix(in oklch, var(--s, var(--ink-faint)) 10%, var(--panel));
+  border: 1px solid color-mix(in oklch, var(--s, var(--ink-faint)) 32%, var(--panel));
 }
-.ftag svg { width: 13px; height: 13px; fill: none; stroke: var(--t); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.ftag.err { --t: var(--red) }
+.ftag svg { width: 13px; height: 13px; fill: none; stroke: var(--s, var(--ink-faint)); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ftag.err { --t: var(--red); --s: var(--red); }
 
 /* ---- Run row + log ---- */
 .run-row { display: flex; align-items: center; gap: 16px; margin-top: 20px; }
@@ -320,8 +338,8 @@ body {
 .tbl .src { color: var(--ink-faint); }
 .tbl .ref { max-width: 130px; font-variant-numeric: tabular-nums; color: var(--ink-soft); }
 /* mini type glyph inside Return cells */
-.tcell { display: inline-flex; align-items: center; gap: 7px; --t: var(--ink-soft); }
-.tcell svg { width: 15px; height: 15px; flex: none; fill: none; stroke: var(--t); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.tcell { display: inline-flex; align-items: center; gap: 7px; }
+.tcell svg { width: 15px; height: 15px; flex: none; fill: none; stroke: var(--s, var(--ink-soft)); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 
 /* ---- Status pills ---- */
 .pill {
