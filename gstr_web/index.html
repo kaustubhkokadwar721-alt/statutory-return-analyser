@@ -89,36 +89,33 @@
 
 <div class="edge" aria-hidden="true"></div>
 
-<div class="wrap">
-
-  <!-- ===== Hero: brand rail + workspace, sized to one screen ===== -->
-  <div class="hero">
-
-  <header class="mast">
+<!-- ===== Top bar: brand + status + offline pledge, one slim row ===== -->
+<header class="topbar">
+  <div class="wrap topbar-in">
     <div class="brand">
       <span class="mark"><svg viewBox="0 0 24 24"><use href="#i-logo"/></svg></span>
-      <div class="eyebrow">For audit working papers</div>
+      <div class="brand-txt">
+        <h1 class="title">Statutory Return <em>Extractor</em></h1>
+        <div class="eyebrow">For audit working papers</div>
+      </div>
     </div>
-    <h1 class="title">Statutory Return <em>Extractor</em></h1>
-    <p class="lede">Drop government-portal PDFs. Get verified ledgers and a compliance
-    overview — parsed entirely on this device, in this browser.</p>
     <div class="statusbar">
       <span class="dot busy" id="dot"></span>
       <span id="statusText">Loading engine…</span>
     </div>
-    <div class="rail-foot">
-      <div class="stamp" aria-label="Guarantee: files never leave this device">
-        <span class="stamp-in">Parsed on<br>this device<br><b>· nothing uploaded ·</b></span>
-      </div>
-      <p class="pledge"><b>Files never leave this device.</b> No upload, no server,
-      no network — every PDF is parsed in this browser via Python compiled to
-      WebAssembly. Open DevTools → Network and watch it stay empty.</p>
+    <div class="pledge-mini" title="Files never leave this device. No upload, no server, no network — every PDF is parsed in this browser via Python compiled to WebAssembly. Open DevTools → Network and watch it stay empty.">
+      <span class="stamp" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><use href="#i-logo"/></svg>
+      </span>
+      <span class="pledge-txt"><b>Files never leave this device</b> · parsed in-browser, nothing uploaded</span>
     </div>
-  </header>
+  </div>
+</header>
 
-  <!-- ===== 01 Documents ===== -->
-  <section class="sec sec-main" data-sec="documents">
-    <div class="sec-head"><span class="sec-no">1</span><span class="sec-kicker">Drop &amp; parse</span></div>
+<div class="wrap main-wrap">
+
+  <!-- ===== Documents ===== -->
+  <section class="sec-main" data-sec="documents">
     <div class="card drop-card">
 
       <div class="tabs" role="tablist" aria-label="Workspace">
@@ -187,9 +184,7 @@
     </div>
   </section>
 
-  </div><!-- /hero -->
-
-</div>
+</div><!-- /main-wrap -->
 
 <script src="./pyodide/pyodide.js"></script>
 <script src="app.js"></script>
