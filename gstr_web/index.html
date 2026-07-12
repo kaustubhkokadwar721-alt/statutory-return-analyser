@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Statutory Return Analyser</title>
+<title>Statutory Return Extractor</title>
 <meta name="description" content="Parse GSTR-1, GSTR-3B, TDS, PF, ESIC, PTRC and ICEGATE Shipping Bill PDFs into clean, verified CSV ledgers, entirely in your browser.">
 <link rel="stylesheet" href="themes/prime.css">
 </head>
@@ -86,28 +86,33 @@
 
 <div class="wrap">
 
-  <!-- ===== Masthead ===== -->
+  <!-- ===== Hero: brand rail + workspace, sized to one screen ===== -->
+  <div class="hero">
+
   <header class="mast">
-    <div class="mast-main">
-      <div class="brand">
-        <span class="mark"><svg viewBox="0 0 24 24"><use href="#i-logo"/></svg></span>
-        <div class="eyebrow">For audit working papers</div>
-      </div>
-      <h1 class="title">Statutory Return <em>Analyser</em></h1>
-      <p class="lede">Drop government-portal PDFs. Get verified ledgers and a compliance
-      overview — parsed entirely on this device, in this browser.</p>
-      <div class="statusbar">
-        <span class="dot busy" id="dot"></span>
-        <span id="statusText">Loading engine…</span>
-      </div>
+    <div class="brand">
+      <span class="mark"><svg viewBox="0 0 24 24"><use href="#i-logo"/></svg></span>
+      <div class="eyebrow">For audit working papers</div>
     </div>
-    <div class="stamp" aria-label="Guarantee: files never leave this device">
-      <span class="stamp-in">Parsed on<br>this device<br><b>· nothing uploaded ·</b></span>
+    <h1 class="title">Statutory Return <em>Extractor</em></h1>
+    <p class="lede">Drop government-portal PDFs. Get verified ledgers and a compliance
+    overview — parsed entirely on this device, in this browser.</p>
+    <div class="statusbar">
+      <span class="dot busy" id="dot"></span>
+      <span id="statusText">Loading engine…</span>
+    </div>
+    <div class="rail-foot">
+      <div class="stamp" aria-label="Guarantee: files never leave this device">
+        <span class="stamp-in">Parsed on<br>this device<br><b>· nothing uploaded ·</b></span>
+      </div>
+      <p class="pledge"><b>Files never leave this device.</b> No upload, no server,
+      no network — every PDF is parsed in this browser via Python compiled to
+      WebAssembly. Open DevTools → Network and watch it stay empty.</p>
     </div>
   </header>
 
   <!-- ===== 01 Documents ===== -->
-  <section class="sec" data-sec="documents">
+  <section class="sec sec-main" data-sec="documents">
     <div class="sec-head"><span class="sec-no">1</span><span class="sec-kicker">Drop &amp; parse</span></div>
     <div class="card drop-card">
 
@@ -142,6 +147,8 @@
     </div>
   </section>
 
+  </div><!-- /hero -->
+
   <!-- ===== 02 Overview (dashboard) ===== -->
   <section class="sec" data-sec="overview" id="dashPanel" style="display:none">
     <div class="sec-head"><span class="sec-no">2</span><span class="sec-kicker">Overview</span></div>
@@ -169,14 +176,6 @@
     <div class="sec-head"><span class="sec-no">4</span><span class="sec-kicker">Download</span></div>
     <div class="card results-card"><div id="results" class="results"></div></div>
   </section>
-
-  <!-- ===== Footer ===== -->
-  <footer class="foot">
-    <span class="seal">100%<br>local</span>
-    <p class="pledge"><b>Files never leave this device.</b> No upload, no server, no network.
-    Every PDF is parsed right here in your browser via Python compiled to WebAssembly —
-    open DevTools → Network and watch it stay empty.</p>
-  </footer>
 
 </div>
 

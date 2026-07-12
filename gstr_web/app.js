@@ -238,6 +238,10 @@ json.dumps(files_list)
     resultsEl.classList.add("show");
     setStatus(`Done — ${pickedFiles.length} PDF(s) processed, ${files.length} CSV(s) ready.`, "ok");
     log("COMPLETE.");
+    // results render below the first screen - bring them into view
+    const dash = document.getElementById("dashPanel");
+    (dash.style.display !== "none" ? dash : resultsPanel)
+      .scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (e) {
     setStatus("Processing failed.", "err");
     log("ERROR:\n" + e.message);
