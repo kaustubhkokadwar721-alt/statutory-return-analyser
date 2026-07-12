@@ -54,6 +54,31 @@ function maybeEnableRun() {
   runBtn.disabled = !(ready && pickedFiles.length > 0);
 }
 
+// ---- workspace tabs: Drop | Files ----
+const TABS = [
+  { tab: $("#tabDrop"),  pane: $("#paneDrop") },
+  { tab: $("#tabFiles"), pane: $("#paneFiles") },
+];
+function selectTab(idx) {
+  TABS.forEach(({ tab, pane }, i) => {
+    const on = i === idx;
+    tab.setAttribute("aria-selected", on ? "true" : "false");
+    tab.tabIndex = on ? 0 : -1;
+    pane.classList.toggle("active", on);
+    pane.hidden = !on;
+  });
+}
+TABS.forEach(({ tab }, i) => {
+  tab.addEventListener("click", () => selectTab(i));
+  tab.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const next = (i + (e.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length;
+    selectTab(next);
+    TABS[next].tab.focus();
+  });
+});
+
 // ---- document-type identity (icons + hues match the sprite/theme) ----
 const TYPE_META = {
   GSTR1:  { icon: "i-gstr1",  cls: "t-gstr1",  label: "GSTR-1" },
@@ -94,11 +119,29 @@ function removeFile(name) {
 
 function renderFiles() {
   const bar = document.getElementById("filesBar");
+  const chips = document.getElementById("fileChips");
+  const empty = document.getElementById("filesEmpty");
+  const tabN = document.getElementById("tabFilesN");
+
+  // tab badge: live count with a small tick when it changes
+  const label = pickedFiles.length ? String(pickedFiles.length) : "";
+  if (tabN.textContent !== label) {
+    tabN.textContent = label;
+    tabN.classList.remove("tick");
+    void tabN.offsetWidth;
+    tabN.classList.add("tick");
+  }
+  document.querySelector(".drop-card").classList.toggle("has-files", pickedFiles.length > 0);
+
   if (!pickedFiles.length) {
     bar.innerHTML = "";
+    chips.innerHTML = "";
     filesEl.innerHTML = "";
+    empty.classList.remove("hide");
     return;
   }
+  empty.classList.add("hide");
+
   const totalBytes = pickedFiles.reduce((s, f) => s + f.bytes.length, 0);
   bar.innerHTML =
     `<span class="files-n">${pickedFiles.length} document${pickedFiles.length > 1 ? "s" : ""} · ${fmtSize(totalBytes)}</span>` +
@@ -107,6 +150,25 @@ function renderFiles() {
     pickedFiles = []; fileTags = {};
     renderFiles(); maybeEnableRun();
   });
+
+  // aggregate chips: per-type counts + review/unreadable, once tags exist
+  const byType = {}; let review = 0, unreadable = 0;
+  for (const f of pickedFiles) {
+    const t = fileTags[f.name];
+    if (!t) continue;
+    if (t.status === "unreadable") { unreadable++; continue; }
+    byType[t.type] = (byType[t.type] || 0) + 1;
+    if (t.status && t.status !== "OK") review++;
+  }
+  let chipHtml = Object.entries(byType)
+    .sort((a, b) => b[1] - a[1])
+    .map(([ty, n]) => {
+      const m = TYPE_META[ty];
+      return `<span class="fchip ${m ? m.cls : ""}">${n} ${esc(m ? m.label : ty)}</span>`;
+    }).join("");
+  if (review)     chipHtml += `<span class="fchip review">${review} review</span>`;
+  if (unreadable) chipHtml += `<span class="fchip err">${unreadable} unreadable</span>`;
+  chips.innerHTML = chipHtml;
 
   filesEl.innerHTML = "";
   for (const f of pickedFiles) {
@@ -176,6 +238,17 @@ await micropip.install(list(wheel_list), deps=False)
 }
 
 // ---- run pipeline ----
+let runStamp = "";  // per-run date-time suffix so repeat downloads never collide
+
+function newRunStamp() {
+  const d = new Date(), p = (x) => String(x).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}`;
+}
+function stampName(filename) {
+  const i = filename.lastIndexOf(".");
+  return i === -1 ? `${filename}_${runStamp}` : `${filename.slice(0, i)}_${runStamp}${filename.slice(i)}`;
+}
+
 runBtn.addEventListener("click", async () => {
   if (!ready || pickedFiles.length === 0) return;
   runBtn.disabled = true;
@@ -209,6 +282,19 @@ files_list = web_bootstrap.run("auto", "/work/in", "/work/out", progress_cb=prog
 json.dumps(files_list)
     `);
     const files = JSON.parse(jsonFiles);
+    runStamp = newRunStamp();
+
+    // bundle every CSV into one zip (built in-sandbox, filenames stamped)
+    pyodide.globals.set("run_stamp", runStamp);
+    await pyodide.runPythonAsync(`
+import zipfile, os
+with zipfile.ZipFile("/work/bundle.zip", "w", zipfile.ZIP_DEFLATED) as z:
+    for fn in sorted(os.listdir("/work/out")):
+        if fn.lower().endswith(".csv"):
+            stem, ext = os.path.splitext(fn)
+            z.write(os.path.join("/work/out", fn), f"{stem}_{run_stamp}{ext}")
+    `);
+    addZipResult(FS.readFile("/work/bundle.zip"), files.length);
 
     for (const f of files) {
       addResult(f.label, f.desc, f.path, FS);
@@ -238,10 +324,8 @@ json.dumps(files_list)
     resultsEl.classList.add("show");
     setStatus(`Done — ${pickedFiles.length} PDF(s) processed, ${files.length} CSV(s) ready.`, "ok");
     log("COMPLETE.");
-    // results render below the first screen - bring them into view
-    const dash = document.getElementById("dashPanel");
-    (dash.style.display !== "none" ? dash : resultsPanel)
-      .scrollIntoView({ behavior: "smooth", block: "start" });
+    // downloads render first, below the hero - bring them into view
+    resultsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (e) {
     setStatus("Processing failed.", "err");
     log("ERROR:\n" + e.message);
@@ -393,7 +477,7 @@ document.getElementById("flaggedOnly").addEventListener("change", renderRecords)
 
 function addResult(label, desc, fsPath, FS) {
   const bytes    = FS.readFile(fsPath);
-  const filename = fsPath.split("/").pop();
+  const filename = stampName(fsPath.split("/").pop());
   const blob     = new Blob([bytes], { type: "text/csv" });
   const url      = URL.createObjectURL(blob);
 
@@ -410,6 +494,25 @@ function addResult(label, desc, fsPath, FS) {
   div.appendChild(a);
   resultsEl.appendChild(div);
   outputs[label] = { filename, bytes };
+}
+
+function addZipResult(bytes, csvCount) {
+  const filename = `Statutory_Returns_${runStamp}.zip`;
+  const url = URL.createObjectURL(new Blob([bytes], { type: "application/zip" }));
+
+  const div = document.createElement("div");
+  div.className = "dl dl-all";
+  div.innerHTML =
+    `<span class="dl-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-download"/></svg></span>` +
+    `<div class="n">Everything<span class="s">${filename} · ${fmtSize(bytes.length)} — all ${csvCount} CSV(s) in one zip</span></div>`;
+
+  const a = document.createElement("a");
+  a.className = "btn";
+  a.href = url;
+  a.download = filename;
+  a.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-download"/></svg>Download all`;
+  div.appendChild(a);
+  resultsEl.appendChild(div);
 }
 
 boot();
