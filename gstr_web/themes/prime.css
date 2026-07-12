@@ -52,7 +52,7 @@
   --shadow-sm: 0 1px 2px oklch(0.30 0.03 80 / .07);
   --radius:    6px;
   --radius-sm: 4px;
-  --maxw:      1380px;
+  --maxw:      1800px;
   --ease:      cubic-bezier(.22,.61,.36,1);
   --font-display:'Spectral', Georgia, serif;
   --font-body:  'Hanken Grotesk', system-ui, -apple-system, sans-serif;
