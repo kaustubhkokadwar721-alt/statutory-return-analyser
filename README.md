@@ -15,12 +15,18 @@ Drop your PDFs → the engine auto-detects each return type → read the dashboa
 ## Why it's safe for client data
 
 Everything runs **client-side** via [Pyodide](https://pyodide.org) (Python compiled to
-WebAssembly). Your PDFs are parsed in an in-memory sandbox and never sent anywhere —
-open DevTools → Network and watch it stay empty.
+WebAssembly). Your PDFs are parsed in an in-memory sandbox and never sent anywhere.
 
 The whole app (Python runtime, libraries, fonts) is **vendored locally**, so once the page
-loads it makes **zero network calls**. Download the folder and open `index.html` straight
-from disk for a fully air-gapped run.
+loads it makes **zero network calls** — open DevTools → Network and watch it stay empty
+after boot. A [service worker](gstr_web/sw.js) caches the runtime on first visit, so later
+launches are instant and the app keeps working **fully offline** (real air-gap use — pull
+the network cable after one load and it still parses).
+
+> **Serve it over HTTP, don't open it from disk.** Browsers block WebAssembly and `fetch()`
+> on `file://` pages, so double-clicking `index.html` will not work — the app detects this
+> and tells you to serve the folder instead (see [Run locally](#run-locally)). Any static
+> host works, including a folder shared on an internal server.
 
 ## What you get
 
@@ -65,7 +71,33 @@ python -m http.server 8000
 # open http://localhost:8000
 ```
 
-(Opening `index.html` via `file://` also works in most browsers.)
+Opening `index.html` directly via `file://` will **not** work — browsers block WebAssembly
+and `fetch()` on filesystem pages. The app checks for this at startup and shows a message
+telling you to serve it over HTTP. It needs a URL, not a double-click.
+
+## Deploying it
+
+It's a static folder — host `gstr_web/` anywhere that serves files over HTTP. The current
+build is on GitHub Pages (see the link at the top). Two things to check on other hosts:
+
+- **All paths are relative**, so it works under a subpath (e.g. `example.com/tools/returns/`)
+  without changes.
+- **The host must serve `.wasm`, `.whl`, `.zip`, and `.json`.** nginx, Apache, and GitHub
+  Pages do by default. **IIS does not** — it refuses unknown extensions, so the Python
+  wheels 404 and the engine won't boot. Add a MIME map in `web.config`:
+
+  ```xml
+  <staticContent>
+    <mimeMap fileExtension=".wasm" mimeType="application/wasm" />
+    <mimeMap fileExtension=".whl"  mimeType="application/octet-stream" />
+    <mimeMap fileExtension=".zip"  mimeType="application/zip" />
+    <mimeMap fileExtension=".json" mimeType="application/json" />
+  </staticContent>
+  ```
+
+If boot fails, the on-screen **diagnostics checklist** names the exact stage that broke
+(browser support → runtime → libraries → engine) and why — so a locked-down-environment
+failure is a one-line diagnosis, not a guess.
 
 ## How it works
 
@@ -86,8 +118,9 @@ engine file, rebuild `engine.zip` (Python `zipfile`, forward-slash arcnames, roo
 
 ```
 gstr_web/            # the browser app (deployed to Pages)
-  index.html         #   UI
-  app.js             #   Pyodide glue (boot, run, render dashboard, download)
+  index.html         #   UI (+ noscript / old-browser guards)
+  app.js             #   Pyodide glue (boot, diagnostics, run, render, download)
+  sw.js              #   service worker — offline cache of the runtime
   themes/prime.css   #   the theme
   fonts/             #   vendored woff2 (Spectral + Hanken Grotesk)
   pyodide/  wheels/  #   vendored runtime + Python wheels
