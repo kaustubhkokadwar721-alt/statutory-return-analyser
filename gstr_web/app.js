@@ -195,15 +195,91 @@ picker.addEventListener("change", (e) => addFiles(e.target.files));
   dropEl.addEventListener(ev, (e) => { e.preventDefault(); dropEl.classList.remove("over"); }));
 dropEl.addEventListener("drop", (e) => addFiles(e.dataTransfer.files));
 
+// ---- boot diagnostics: a visible ✔/⏳/✖ checklist so a failed boot on an
+// unfamiliar machine says exactly which stage died, not just "something broke" ----
+const DIAG_STEPS = [
+  "Browser supported",
+  "Python runtime (WebAssembly)",
+  "Data libraries (pandas)",
+  "PDF engine (pdfplumber)",
+  "Return engine",
+];
+const diagEl = $("#bootDiag");
+let diagCurrent = -1;
+
+function diagRender() {
+  diagEl.hidden = false;
+  diagEl.innerHTML = DIAG_STEPS.map((label, i) => {
+    const cls = i < diagCurrent ? "ok" : i === diagCurrent ? "busy" : "";
+    const mark = i < diagCurrent ? "✔" : i === diagCurrent ? "" : "";
+    return `<li class="diag-step ${cls}"><span class="diag-mark">${mark}</span>${esc(label)}</li>`;
+  }).join("");
+}
+function diagStart(i) {
+  diagCurrent = i;
+  diagRender();
+}
+function diagFail(i, reason) {
+  diagCurrent = i;
+  diagRender();
+  const li = diagEl.children[i];
+  li.classList.remove("busy");
+  li.classList.add("err");
+  li.querySelector(".diag-mark").textContent = "✖";
+  const reasonEl = document.createElement("div");
+  reasonEl.className = "diag-reason";
+  reasonEl.textContent = reason;
+  li.appendChild(reasonEl);
+}
+function diagDone() {
+  diagCurrent = DIAG_STEPS.length;
+  diagRender();
+  setTimeout(() => { diagEl.hidden = true; }, 1500);
+}
+
 // ---- boot Pyodide ----
-async function boot() {
+async function fetchBinary(url, what) {
+  let res;
   try {
+    res = await fetch(url);
+  } catch (e) {
+    throw new Error(`Could not fetch ${what} (${url}). ` +
+      (location.protocol === "file:"
+        ? "This page was opened from the filesystem — browsers block fetch() on file:// pages. Serve the folder over HTTP (e.g. `python -m http.server`) and open http://localhost instead."
+        : "Check the network connection and that the file is deployed alongside index.html."));
+  }
+  if (!res.ok) {
+    throw new Error(`Server returned ${res.status} for ${what} (${url}). ` +
+      "If this is a custom web server (e.g. IIS), make sure it serves .zip, .whl, .wasm and .json files.");
+  }
+  return res.arrayBuffer();
+}
+
+async function boot() {
+  let step = 0;
+  diagStart(step);
+  try {
+    if (location.protocol === "file:") {
+      throw new Error("This app cannot run from a file:// URL — browsers block WebAssembly and fetch() there. " +
+        "Serve the folder over HTTP (e.g. run `python -m http.server` inside it) and open http://localhost:8000.");
+    }
+    if (typeof WebAssembly === "undefined") {
+      throw new Error("This browser does not support WebAssembly. Use a current version of Chrome, Edge, Firefox or Safari.");
+    }
+    if (typeof loadPyodide === "undefined") {
+      throw new Error("pyodide.js did not load. Check that the pyodide/ folder is deployed next to index.html " +
+        "and that no extension or content-security policy is blocking scripts.");
+    }
+
+    step = 1; diagStart(step);
     setStatus("Loading Python runtime…", "busy");
     pyodide = await loadPyodide({ indexURL: PYODIDE_INDEX });
 
+    step = 2; diagStart(step);
     setStatus("Loading data libraries…", "busy");
     await pyodide.loadPackage(["micropip", "Pillow", "cryptography", "pandas"]);
 
+    step = 3; diagStart(step);
     setStatus("Installing PDF engine…", "busy");
     pyodide.globals.set("wheel_list", LOCAL_WHEELS);
     await pyodide.runPythonAsync(`
@@ -211,17 +287,22 @@ import micropip
 await micropip.install(list(wheel_list), deps=False)
     `);
 
+    step = 4; diagStart(step);
     setStatus("Loading return engine…", "busy");
-    const zipBuf = await (await fetch(ENGINE_ZIP)).arrayBuffer();
+    const zipBuf = await fetchBinary(ENGINE_ZIP, "the return engine");
     await pyodide.unpackArchive(zipBuf, "zip");
     await pyodide.runPythonAsync("import web_bootstrap");
 
     ready = true;
+    diagDone();
     setStatus("Ready — 100% offline, nothing leaves this device.", "ok");
     maybeEnableRun();
   } catch (e) {
+    diagFail(step, e.message);
     setStatus("Engine failed to load: " + e.message, "err");
-    log("BOOT ERROR:\n" + e.message);
+    log("BOOT ERROR:\n" + e.message +
+      "\n\nCommon causes: opening the page from file://, a web server that blocks .whl/.wasm/.zip files, " +
+      "an ad-blocker or strict content-security policy, or a very old browser.");
     console.error(e);
   }
 }
@@ -244,6 +325,8 @@ runBtn.addEventListener("click", async () => {
   outputs = {};
   consolidated = []; dashboard = []; parseErrors = [];
   resultsEl.classList.remove("show");
+  // release blob URLs from the previous run before discarding the buttons
+  resultsEl.querySelectorAll("a[href^='blob:']").forEach((a) => URL.revokeObjectURL(a.href));
   resultsEl.innerHTML = "";
   logEl.textContent = "";
   setStatus("Processing…", "busy");
@@ -502,3 +585,11 @@ function addZipResult(bytes, csvCount) {
 }
 
 boot();
+
+// ---- offline cache: precache the ~60MB runtime so repeat launches are
+// instant and the "nothing leaves this device" pledge holds even with no
+// network. Silently skipped where service workers are unavailable/blocked
+// (some corporate policies) — the app then behaves exactly as before. ----
+if ("serviceWorker" in navigator && location.protocol !== "file:") {
+  navigator.serviceWorker.register("./sw.js").catch(() => {});
+}

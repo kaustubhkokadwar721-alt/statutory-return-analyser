@@ -187,6 +187,27 @@ body {
   border-bottom: 1.5px solid var(--rule);
 }
 
+/* ---- Boot diagnostics: visible ✔/⏳/✖ checklist for the engine load ---- */
+.diag {
+  list-style: none; margin: 0 0 16px; padding: 10px 14px;
+  background: var(--sink); border: 1px solid var(--rule); border-radius: var(--radius);
+  font-size: 12px; display: flex; flex-direction: column; gap: 5px;
+}
+.diag-step { display: flex; align-items: center; gap: 8px; color: var(--ink-faint); }
+.diag-step.busy { color: var(--ink-soft); }
+.diag-step.ok   { color: var(--ink-soft); }
+.diag-step.err  { color: var(--red); font-weight: 600; }
+.diag-mark {
+  flex: none; width: 14px; text-align: center; font-size: 11px;
+  color: var(--ok);
+}
+.diag-step.busy .diag-mark {
+  width: 7px; height: 7px; margin: 0 3.5px; border-radius: 50%;
+  background: var(--amber); animation: pulse 1.4s var(--ease) infinite;
+}
+.diag-step.err .diag-mark { color: var(--red); }
+.diag-reason { margin-left: 22px; font-size: 11px; color: var(--ink-faint); font-weight: 400; }
+
 /* ---- Document-type tile grid: the identity ---- */
 .types {
   display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px;

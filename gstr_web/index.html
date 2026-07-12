@@ -125,6 +125,8 @@
 
       <div class="pane active" id="paneDrop" role="tabpanel" aria-labelledby="tabDrop">
 
+      <ol id="bootDiag" class="diag" hidden></ol>
+
       <ul class="types" aria-label="Document types handled">
         <li class="type t-gstr1"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-gstr1"/></svg></span><b>GSTR-1</b><i>Outward supplies</i></li>
         <li class="type t-gstr3b"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-gstr3b"/></svg></span><b>GSTR-3B</b><i>Monthly summary</i></li>
@@ -186,6 +188,30 @@
 
 </div><!-- /main-wrap -->
 
+<noscript>
+  <div style="max-width:640px;margin:40px auto;padding:16px;border:1px solid #c66;border-radius:8px;font-family:sans-serif">
+    <b>JavaScript is disabled.</b> This tool parses PDFs entirely inside your browser and cannot work without JavaScript.
+    Enable JavaScript for this site and reload.
+  </div>
+</noscript>
+<script>
+// ES5-only guard: app.js uses modern syntax and will not even parse in old
+// browsers, so this check must live here and use nothing newer than ES5.
+(function () {
+  var msg = null;
+  if (typeof WebAssembly === "undefined") {
+    msg = "This browser is too old to run the in-browser PDF engine (no WebAssembly). Use a current version of Chrome, Edge, Firefox or Safari.";
+  } else if (window.location.protocol === "file:") {
+    msg = "Opened from a file:// URL — browsers block the engine here. Serve this folder over HTTP (e.g. `python -m http.server`) and open http://localhost:8000.";
+  }
+  if (msg) {
+    var el = document.getElementById("statusText");
+    var dot = document.getElementById("dot");
+    if (el) el.textContent = msg;
+    if (dot) dot.className = "dot err";
+  }
+})();
+</script>
 <script src="./pyodide/pyodide.js"></script>
 <script src="app.js"></script>
 </body>
