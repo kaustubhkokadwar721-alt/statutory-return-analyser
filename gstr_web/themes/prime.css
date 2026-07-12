@@ -80,8 +80,6 @@ body {
 }
 
 .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 clamp(20px, 4vw, 56px); }
-/* bottom breathing room only once the post-run sections exist */
-#recPanel { margin-bottom: 40px; }
 
 /* ---- Hero: brand rail + workspace, exactly one screen on desktop ---- */
 .hero {
@@ -175,7 +173,7 @@ body {
   background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius);
   padding: 26px; box-shadow: var(--shadow);
 }
-.drop-card { display: flex; flex-direction: column; }
+.drop-card { display: flex; flex-direction: column; max-height: calc(100dvh - 120px); }
 
 /* ---- Workspace tabs: Drop | Files ---- */
 .tabs { display: flex; gap: 24px; margin: -6px 0 18px; border-bottom: 1.5px solid var(--rule); }
@@ -199,8 +197,19 @@ body {
 .tab-n:empty { display: none; }
 .tab-n.tick { animation: tick .35s var(--ease); }
 @keyframes tick { 40% { transform: scale(1.22); } }
+.tab[hidden] { display: none; }
 .pane { display: none; }
-.pane.active { display: flex; flex-direction: column; flex: 1; }
+.pane.active { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+/* results live inside the card: the pane scrolls, the page never does */
+.pane-results.active { overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; }
+.rsec { margin-top: 28px; }
+.rsec:first-child { margin-top: 2px; }
+.rsec-head {
+  display: flex; align-items: center; gap: 12px;
+  font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--ink-soft); padding-bottom: 8px; margin-bottom: 14px;
+  border-bottom: 1.5px solid var(--rule);
+}
 
 /* ---- Document-type tile grid: the identity ---- */
 .types {
@@ -283,10 +292,10 @@ body {
 .has-files .drop-big { font-family: var(--font-body); font-size: 14px; font-weight: 600; }
 .has-files .drop-small { margin: 0 0 0 auto; }
 
-/* ---- Picked files (Files tab) ---- */
+/* ---- Picked files ---- */
 .files-bar {
   display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
-  margin-top: 2px;
+  margin-top: 16px;
 }
 .files-bar:empty { display: none; }
 /* aggregate per-type chips: "58 TDS · 4 review" at a glance */
@@ -303,8 +312,6 @@ body {
 }
 .fchip.review { --t: var(--amber); --s: var(--amber); }
 .fchip.err    { --t: var(--red);   --s: var(--red); }
-.files-empty { margin: 22px 0; font-size: 13px; color: var(--ink-faint); text-align: center; }
-.files-empty.hide { display: none; }
 .files-n { font-size: 12px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
 .clear-all {
   appearance: none; background: none; border: none; padding: 0; cursor: pointer;
@@ -316,6 +323,7 @@ body {
 .clear-all:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
 .files {
   display: flex; flex-direction: column; gap: 1px; margin-top: 12px;
+  flex: 0 1 auto; min-height: 90px;
   max-height: 300px; overflow-y: auto; overscroll-behavior: contain;
   padding-right: 2px;
 }
@@ -446,8 +454,7 @@ body {
 .flagtoggle input { accent-color: var(--green); cursor: pointer; }
 
 /* ---- Downloads ---- */
-.results-card { padding: 0; }
-.results { display: none; flex-direction: column; }
+.results { display: none; flex-direction: column; border: 1px solid var(--rule-soft); border-radius: var(--radius-sm); }
 .results.show { display: flex; }
 .dl {
   display: flex; align-items: center; gap: 16px;
@@ -480,12 +487,14 @@ body {
 .dl-all .btn svg { fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 
 /* ---- Reveal on state change ---- */
-#dashPanel, #recPanel, #resultsPanel { animation: rise .4s var(--ease) both; }
+.pane-results.active { animation: rise .4s var(--ease) both; }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
 /* ---- Responsive ---- */
 @media (max-width: 1020px) {
-  .hero { grid-template-columns: 1fr; min-height: 0; gap: 26px; padding-top: 30px; }
+  .hero { grid-template-columns: 1fr; min-height: 0; gap: 26px; padding-top: 30px; padding-bottom: 30px; }
+  .drop-card { max-height: none; }
+  .pane-results.active { overflow: visible; padding-right: 0; }
   .mast { align-items: flex-start; }
   .lede { max-width: 60ch; }
   .rail-foot { margin-top: 18px; }
@@ -515,7 +524,8 @@ body {
   .drop-ic { width: 46px; height: 46px; margin-bottom: 10px; }
   .drop-big { font-size: 22px; }
   .hero { padding: 14px 0; }
-  .files { max-height: 200px; }
+  .files { max-height: 180px; }
+  .log { max-height: 96px; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }

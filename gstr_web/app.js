@@ -33,7 +33,7 @@ const filesEl    = $("#files");
 const dropEl     = $("#drop");
 const picker     = $("#picker");
 const resultsEl  = $("#results");
-const resultsPanel = $("#resultsPanel");
+const resultsTab = $("#tabResults");
 
 function setStatus(text, cls) {
   statusText.textContent = text;
@@ -54,10 +54,10 @@ function maybeEnableRun() {
   runBtn.disabled = !(ready && pickedFiles.length > 0);
 }
 
-// ---- workspace tabs: Drop | Files ----
+// ---- workspace tabs: Drop & parse | Results (appears after a run) ----
 const TABS = [
-  { tab: $("#tabDrop"),  pane: $("#paneDrop") },
-  { tab: $("#tabFiles"), pane: $("#paneFiles") },
+  { tab: $("#tabDrop"),    pane: $("#paneDrop") },
+  { tab: $("#tabResults"), pane: $("#paneResults") },
 ];
 function selectTab(idx) {
   TABS.forEach(({ tab, pane }, i) => {
@@ -74,6 +74,7 @@ TABS.forEach(({ tab }, i) => {
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
     e.preventDefault();
     const next = (i + (e.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length;
+    if (TABS[next].tab.hidden) return;
     selectTab(next);
     TABS[next].tab.focus();
   });
@@ -120,27 +121,15 @@ function removeFile(name) {
 function renderFiles() {
   const bar = document.getElementById("filesBar");
   const chips = document.getElementById("fileChips");
-  const empty = document.getElementById("filesEmpty");
-  const tabN = document.getElementById("tabFilesN");
 
-  // tab badge: live count with a small tick when it changes
-  const label = pickedFiles.length ? String(pickedFiles.length) : "";
-  if (tabN.textContent !== label) {
-    tabN.textContent = label;
-    tabN.classList.remove("tick");
-    void tabN.offsetWidth;
-    tabN.classList.add("tick");
-  }
   document.querySelector(".drop-card").classList.toggle("has-files", pickedFiles.length > 0);
 
   if (!pickedFiles.length) {
     bar.innerHTML = "";
     chips.innerHTML = "";
     filesEl.innerHTML = "";
-    empty.classList.remove("hide");
     return;
   }
-  empty.classList.add("hide");
 
   const totalBytes = pickedFiles.reduce((s, f) => s + f.bytes.length, 0);
   bar.innerHTML =
@@ -254,9 +243,6 @@ runBtn.addEventListener("click", async () => {
   runBtn.disabled = true;
   outputs = {};
   consolidated = []; dashboard = []; parseErrors = [];
-  resultsPanel.style.display = "none";
-  document.getElementById("dashPanel").style.display = "none";
-  document.getElementById("recPanel").style.display = "none";
   resultsEl.classList.remove("show");
   resultsEl.innerHTML = "";
   logEl.textContent = "";
@@ -320,12 +306,14 @@ with zipfile.ZipFile("/work/bundle.zip", "w", zipfile.ZIP_DEFLATED) as z:
       console.warn("Dashboard render skipped:", e);
     }
 
-    resultsPanel.style.display = "block";
     resultsEl.classList.add("show");
     setStatus(`Done — ${pickedFiles.length} PDF(s) processed, ${files.length} CSV(s) ready.`, "ok");
     log("COMPLETE.");
-    // downloads render first, below the hero - bring them into view
-    resultsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+    // reveal the Results tab and take the user straight to it
+    resultsTab.hidden = false;
+    document.getElementById("tabResultsN").textContent = String(files.length);
+    selectTab(1);
+    document.getElementById("paneResults").scrollTop = 0;
   } catch (e) {
     setStatus("Processing failed.", "err");
     log("ERROR:\n" + e.message);
@@ -395,15 +383,13 @@ function renderDashboard() {
     const go = () => {
       document.getElementById("flaggedOnly").checked = true;
       renderRecords();
-      document.getElementById("recPanel").scrollIntoView({ behavior: "smooth", block: "start" });
+      document.getElementById("recTable").scrollIntoView({ behavior: "smooth", block: "nearest" });
     };
     el.addEventListener("click", go);
     el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
   });
   document.getElementById("dashTable").innerHTML = dashTableHTML();
   renderRecords();
-  document.getElementById("dashPanel").style.display = "block";
-  document.getElementById("recPanel").style.display = "block";
 }
 
 function dashTableHTML() {
