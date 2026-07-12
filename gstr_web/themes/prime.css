@@ -84,7 +84,7 @@ body {
     var(--s-pf) 0 57.14%, var(--s-esic) 0 71.42%, var(--s-ptrc) 0 85.71%, var(--s-sb) 0 100%);
 }
 
-.wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 clamp(20px, 4vw, 56px); }
+.wrap { width: 100%; max-width: var(--maxw); margin: 0 auto; padding: 0 clamp(20px, 4vw, 56px); }
 
 /* ---- Top bar: brand + status + offline pledge, one slim row ---- */
 .topbar {
