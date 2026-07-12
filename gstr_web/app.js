@@ -54,6 +54,22 @@ function maybeEnableRun() {
   runBtn.disabled = !(ready && pickedFiles.length > 0);
 }
 
+// ---- document-type identity (icons + hues match the sprite/theme) ----
+const TYPE_META = {
+  GSTR1:  { icon: "i-gstr1",  cls: "t-gstr1",  label: "GSTR-1" },
+  GSTR3B: { icon: "i-gstr3b", cls: "t-gstr3b", label: "GSTR-3B" },
+  TDS:    { icon: "i-tds",    cls: "t-tds",    label: "TDS" },
+  PF:     { icon: "i-pf",     cls: "t-pf",     label: "PF" },
+  ESIC:   { icon: "i-esic",   cls: "t-esic",   label: "ESIC" },
+  PTRC:   { icon: "i-ptrc",   cls: "t-ptrc",   label: "PTRC" },
+  SB:     { icon: "i-sb",     cls: "t-sb",     label: "Ship. Bill" },
+};
+function typeCell(rt) {
+  const m = TYPE_META[rt];
+  if (!m) return esc(rt);
+  return `<span class="tcell ${m.cls}"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#${m.icon}"/></svg>${m.label}</span>`;
+}
+
 // ---- file selection ----
 let fileTags = {};  // name -> {type, status} once parsed
 
@@ -97,11 +113,17 @@ function renderFiles() {
     const tag = fileTags[f.name];
     const div = document.createElement("div");
     div.className = "f";
-    const tagHtml = tag
-      ? (tag.status === "unreadable"
-          ? `<span class="ftag err">unreadable</span>`
-          : `<span class="ftag ${(tag.status || "").toLowerCase()}">${esc(tag.type)}</span>`)
-      : "";
+    let tagHtml = "";
+    if (tag) {
+      if (tag.status === "unreadable") {
+        tagHtml = `<span class="ftag err">unreadable</span>`;
+      } else {
+        const m = TYPE_META[tag.type];
+        const ic = m ? `<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#${m.icon}"/></svg>` : "";
+        tagHtml = `<span class="ftag ${m ? m.cls : ""}">${ic}${esc(m ? m.label : tag.type)}</span>` +
+                  (tag.status !== "OK" ? `<span class="pill ${(tag.status || "").toLowerCase()}">${esc(tag.status)}</span>` : "");
+      }
+    }
     div.innerHTML =
       `<span class="nm" title="${esc(f.name)}">${esc(f.name)}</span>${tagHtml}` +
       `<span class="sz">${fmtSize(f.bytes.length)}</span>` +
@@ -300,7 +322,7 @@ function dashTableHTML() {
   if (!dashboard.length) return "";
   const head = ["Return", "FY", "Docs", "OK", "Review", "Err", "Periods", "Value ₹"];
   const body = dashboard.map((d) => `<tr>
-      <td>${esc(d.ReturnType)}</td><td>${esc(d.FY)}</td>
+      <td>${typeCell(d.ReturnType)}</td><td>${esc(d.FY)}</td>
       <td class="num">${d.Records}</td>
       <td class="num">${d.OK}</td>
       <td class="num rev">${d.Review}</td>
@@ -336,7 +358,7 @@ function renderRecords() {
     const st = (r.Status || "").toLowerCase();
     return `<tr>
       <td><span class="pill ${st}">${esc(r.Status)}</span></td>
-      <td>${esc(r.ReturnType)}</td>
+      <td>${typeCell(r.ReturnType)}</td>
       <td class="ell" title="${esc(r.EntityName)} (${esc(r.EntityID)})">${esc(r.EntityID)}</td>
       <td>${esc(r.FY)}</td>
       <td>${esc(period(r))}</td>
@@ -373,7 +395,9 @@ function addResult(label, desc, fsPath, FS) {
 
   const div = document.createElement("div");
   div.className = "dl";
-  div.innerHTML = `<div class="n">${label}<span class="s">${filename} · ${fmtSize(bytes.length)} — ${desc}</span></div>`;
+  div.innerHTML =
+    `<span class="dl-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-csv"/></svg></span>` +
+    `<div class="n">${label}<span class="s">${filename} · ${fmtSize(bytes.length)} — ${desc}</span></div>`;
 
   const a = document.createElement("a");
   a.href = url;
