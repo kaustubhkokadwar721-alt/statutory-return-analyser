@@ -19,9 +19,10 @@ let pyodide    = null;
 let ready      = false;
 let pickedFiles = [];   // [{name, bytes}]
 let outputs    = {};
-let consolidated = [];  // parsed rows of All_Returns_Consolidated.csv
-let dashboard    = [];  // parsed rows of Dashboard_Summary.csv
-let parseErrors  = [];  // files that could not be parsed at all
+let consolidated   = [];  // unified ledger rows (one per document)
+let dashboard      = [];  // head × DocKind × FY summary rows
+let reconciliation = [];  // per-period declared-vs-paid tie-out rows
+let parseErrors    = [];  // files that could not be parsed at all
 
 // ---- dom ----
 const $ = (s) => document.querySelector(s);
@@ -94,6 +95,13 @@ function typeCell(rt) {
   const m = TYPE_META[rt];
   if (!m) return esc(rt);
   return `<span class="tcell ${m.cls}"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#${m.icon}"/></svg>${m.label}</span>`;
+}
+
+// ---- document-kind badge: Return / Challan / Payment / Arrears ----
+const KIND_CLASS = { Return: "k-return", Challan: "k-challan", Payment: "k-payment", Arrears: "k-arrears" };
+function kindCell(k) {
+  if (!k) return "—";
+  return `<span class="kcell ${KIND_CLASS[k] || ""}">${esc(k)}</span>`;
 }
 
 // ---- file selection ----
@@ -345,56 +353,42 @@ for d in ("/work/in", "/work/out"):
     const progress = (step, detail) => log(`  [${step}] ${detail || ""}`);
     pyodide.globals.set("progress_cb", progress);
 
-    const jsonFiles = await pyodide.runPythonAsync(`
+    const resultJson = await pyodide.runPythonAsync(`
 import web_bootstrap, json
-files_list = web_bootstrap.run("auto", "/work/in", "/work/out", progress_cb=progress_cb)
-json.dumps(files_list)
+result = web_bootstrap.run("auto", "/work/in", "/work/out", progress_cb=progress_cb)
+json.dumps(result)
     `);
-    const files = JSON.parse(jsonFiles);
+    const result = JSON.parse(resultJson);
     runStamp = newRunStamp();
 
-    // bundle every CSV into one zip (built in-sandbox, filenames stamped)
-    pyodide.globals.set("run_stamp", runStamp);
-    await pyodide.runPythonAsync(`
-import zipfile, os
-with zipfile.ZipFile("/work/bundle.zip", "w", zipfile.ZIP_DEFLATED) as z:
-    for fn in sorted(os.listdir("/work/out")):
-        if fn.lower().endswith(".csv"):
-            stem, ext = os.path.splitext(fn)
-            z.write(os.path.join("/work/out", fn), f"{stem}_{run_stamp}{ext}")
-    `);
-    addZipResult(FS.readFile("/work/bundle.zip"), files.length);
+    consolidated   = result.consolidated   || [];
+    dashboard      = result.dashboard      || [];
+    reconciliation = result.reconciliation || [];
+    parseErrors    = (result.errors || []).map((e) => ({ File: e.File, Message: e.Message }));
 
-    for (const f of files) {
-      addResult(f.label, f.desc, f.path, FS);
+    // one Excel workbook — the sole deliverable
+    if (result.workbook) {
+      addWorkbookResult(FS.readFile(result.workbook), result.workbook_name || "Statutory_Returns.xlsx", consolidated.length);
     }
 
-    // ---- in-browser dashboard from the CSVs the engine just wrote ----
-    try {
-      consolidated = parseCSV(FS.readFile("/work/out/All_Returns_Consolidated.csv", { encoding: "utf8" }));
-      dashboard    = readMaybe(FS, "/work/out/Dashboard_Summary.csv");
-      parseErrors  = readMaybe(FS, "/work/out/Parsing_Errors.csv");
-
-      // tag each picked file with its detected type / outcome
-      fileTags = {};
-      for (const r of consolidated) {
-        if (!fileTags[r.SourceFile] || r.Status !== "OK")
-          fileTags[r.SourceFile] = { type: r.ReturnType, status: r.Status };
-      }
-      for (const e2 of parseErrors) fileTags[e2.File] = { type: "", status: "unreadable" };
-      renderFiles();
-
-      renderDashboard();
-    } catch (e) {
-      console.warn("Dashboard render skipped:", e);
+    // tag each picked file with its detected head / kind / outcome
+    fileTags = {};
+    for (const r of consolidated) {
+      if (!fileTags[r.SourceFile] || r.Status !== "OK")
+        fileTags[r.SourceFile] = { type: r.ReturnType, kind: r.DocKind, status: r.Status };
     }
+    for (const e2 of parseErrors) fileTags[e2.File] = { type: "", status: "unreadable" };
+    renderFiles();
+
+    renderDashboard();
+    renderReconciliation();
 
     resultsEl.classList.add("show");
-    setStatus(`Done — ${pickedFiles.length} PDF(s) processed, ${files.length} CSV(s) ready.`, "ok");
+    setStatus(`Done — ${pickedFiles.length} PDF(s) processed, ${consolidated.length} record(s), workbook ready.`, "ok");
     log("COMPLETE.");
     // reveal the Results tab and take the user straight to it
     resultsTab.hidden = false;
-    document.getElementById("tabResultsN").textContent = String(files.length);
+    document.getElementById("tabResultsN").textContent = String(consolidated.length);
     selectTab(1);
     document.getElementById("paneResults").scrollTop = 0;
   } catch (e) {
@@ -408,33 +402,6 @@ with zipfile.ZipFile("/work/bundle.zip", "w", zipfile.ZIP_DEFLATED) as z:
 });
 
 // ---- dashboard rendering ----
-function readMaybe(FS, path) {
-  try { return parseCSV(FS.readFile(path, { encoding: "utf8" })); }
-  catch { return []; }
-}
-
-// RFC-4180-ish CSV parser (handles quoted fields, embedded commas/newlines)
-function parseCSV(text) {
-  const rows = []; let row = [], cur = "", q = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (q) {
-      if (c === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; }
-      else cur += c;
-    } else if (c === '"') q = true;
-    else if (c === ",") { row.push(cur); cur = ""; }
-    else if (c === "\r") { /* skip */ }
-    else if (c === "\n") { row.push(cur); rows.push(row); row = []; cur = ""; }
-    else cur += c;
-  }
-  if (cur !== "" || row.length) { row.push(cur); rows.push(row); }
-  if (!rows.length) return [];
-  const hdr = rows.shift();
-  return rows
-    .filter((r) => r.some((v) => v !== ""))
-    .map((r) => Object.fromEntries(hdr.map((h, i) => [h, r[i] ?? ""])));
-}
-
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const money = (n) => (Number(n) || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 });
 const period = (r) => {
@@ -446,7 +413,13 @@ function renderDashboard() {
   const n = consolidated.length;
   const failed = parseErrors.length;
   const by = (s) => consolidated.filter((r) => r.Status === s).length;
-  const liab = consolidated.reduce((s, r) => s + (Number(r.PrimaryAmount) || 0), 0);
+  // Declared = what returns owe; Paid = what challans/payments settled. Summing
+  // across kinds would double/triple-count the same liability, so keep them apart.
+  const sumKind = (kinds) => consolidated
+    .filter((r) => kinds.includes(r.DocKind))
+    .reduce((s, r) => s + (Number(r.PrimaryAmount) || 0), 0);
+  const declared = sumKind(["Return"]);
+  const paid     = sumKind(["Challan", "Payment"]);
   const flaggable = by("Review") + by("Error") > 0;
   const kpis = [
     ["Documents", n + failed, "", false],
@@ -455,7 +428,8 @@ function renderDashboard() {
     ["Errors", by("Error"), "error", flaggable],
   ];
   if (failed) kpis.push(["Unreadable", failed, "error", false]);
-  kpis.push(["Total value ₹", money(liab), "", false]);
+  kpis.push(["Declared ₹", money(declared), "", false]);
+  kpis.push(["Paid ₹", money(paid), "", false]);
   document.getElementById("kpis").innerHTML = kpis
     .map(([l, v, c, click]) =>
       `<div class="kpi ${c}${click ? " clickable" : ""}"${click ? ` role="button" tabindex="0" data-filter="1" aria-label="Show flagged records"` : ""}>` +
@@ -477,15 +451,17 @@ function renderDashboard() {
 
 function dashTableHTML() {
   if (!dashboard.length) return "";
-  const head = ["Return", "FY", "Docs", "OK", "Review", "Err", "Periods", "Value ₹"];
+  const head = ["Head", "Document", "FY", "Docs", "OK", "Review", "Err", "Periods", "Amount ₹"];
   const body = dashboard.map((d) => `<tr>
-      <td>${typeCell(d.ReturnType)}</td><td>${esc(d.FY)}</td>
+      <td>${typeCell(d.ReturnType)}</td>
+      <td>${kindCell(d.DocKind)}</td>
+      <td>${esc(d.FY)}</td>
       <td class="num">${d.Records}</td>
       <td class="num">${d.OK}</td>
       <td class="num rev">${d.Review}</td>
       <td class="num err">${d.Errors}</td>
       <td class="num">${d.Periods}</td>
-      <td class="num">${money(d.TotalPrimaryAmt)}</td></tr>`).join("");
+      <td class="num">${money(d.TotalAmount)}</td></tr>`).join("");
   return `<table class="tbl"><thead><tr>${head.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
@@ -510,12 +486,13 @@ function renderRecords() {
     : `${consolidated.length} record${consolidated.length !== 1 ? "s" : ""}` +
       (flagged ? ` · ${flagged} flagged` : " · all clean");
 
-  const head = ["", "Return", "Entity", "FY", "Period", "Ref", "Value ₹", "Flags", "Source"];
+  const head = ["", "Head", "Document", "Entity", "FY", "Period", "Ref", "Amount ₹", "Flags", "Source"];
   const body = rows.map((r) => {
     const st = (r.Status || "").toLowerCase();
     return `<tr>
       <td><span class="pill ${st}">${esc(r.Status)}</span></td>
       <td>${typeCell(r.ReturnType)}</td>
+      <td>${kindCell(r.DocKind)}</td>
       <td class="ell" title="${esc(r.EntityName)} (${esc(r.EntityID)})">${esc(r.EntityID)}</td>
       <td>${esc(r.FY)}</td>
       <td>${esc(period(r))}</td>
@@ -542,44 +519,59 @@ function renderBadFiles() {
       </div>`).join("");
 }
 
-document.getElementById("flaggedOnly").addEventListener("change", renderRecords);
+// ---- reconciliation: per-period declared-vs-paid tie-out ----
+function renderReconciliation() {
+  const el = document.getElementById("reconTable");
+  const sec = document.getElementById("reconSec");
+  if (!el || !sec) return;
+  if (!reconciliation.length) { sec.hidden = true; el.innerHTML = ""; return; }
+  sec.hidden = false;
 
-function addResult(label, desc, fsPath, FS) {
-  const bytes    = FS.readFile(fsPath);
-  const filename = stampName(fsPath.split("/").pop());
-  const blob     = new Blob([bytes], { type: "text/csv" });
-  const url      = URL.createObjectURL(blob);
+  const rank = { Mismatch: 0, "Unpaid?": 1, "No demand doc": 1 };
+  const rows = reconciliation.slice().sort((a, b) =>
+    (rank[a.Status] ?? 2) - (rank[b.Status] ?? 2) ||
+    String(a.ReturnType).localeCompare(b.ReturnType) ||
+    String(a.PeriodDate).localeCompare(b.PeriodDate));
 
-  const div = document.createElement("div");
-  div.className = "dl";
-  div.innerHTML =
-    `<span class="dl-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-csv"/></svg></span>` +
-    `<div class="n">${label}<span class="s">${filename} · ${fmtSize(bytes.length)} — ${desc}</span></div>`;
+  const matched = rows.filter((r) => r.Status === "Matched").length;
+  document.getElementById("reconCount").textContent =
+    `${matched}/${rows.length} matched`;
 
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.textContent = "Download";
-  div.appendChild(a);
-  resultsEl.appendChild(div);
-  outputs[label] = { filename, bytes };
+  const head = ["Head", "Period", "Docs", "Declared ₹", "Challan ₹", "Payment ₹", "Δ", "Status"];
+  const body = rows.map((r) => {
+    const cls = r.Status === "Matched" ? "ok" : "error";
+    return `<tr>
+      <td>${typeCell(r.ReturnType)}</td>
+      <td>${esc(r.PeriodDate ? r.PeriodDate.slice(0, 7) : "—")}</td>
+      <td class="num${Number(r.Docs) > 1 ? " rev" : ""}">${esc(r.Docs)}</td>
+      <td class="num">${money(r.Declared)}</td>
+      <td class="num">${money(r.Challan)}</td>
+      <td class="num">${money(r.Payment)}</td>
+      <td class="num ${Number(r.Delta) ? "err" : ""}">${r.Delta ? money(r.Delta) : "—"}</td>
+      <td><span class="pill ${cls}">${esc(r.Status)}</span></td></tr>`;
+  }).join("");
+  el.innerHTML =
+    `<table class="tbl"><thead><tr>${head.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
-function addZipResult(bytes, csvCount) {
-  const filename = `Statutory_Returns_${runStamp}.zip`;
-  const url = URL.createObjectURL(new Blob([bytes], { type: "application/zip" }));
+document.getElementById("flaggedOnly").addEventListener("change", renderRecords);
+
+function addWorkbookResult(bytes, name, recordCount) {
+  const filename = stampName(name);
+  const url = URL.createObjectURL(new Blob([bytes],
+    { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
 
   const div = document.createElement("div");
   div.className = "dl dl-all";
   div.innerHTML =
-    `<span class="dl-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-download"/></svg></span>` +
-    `<div class="n">Everything<span class="s">${filename} · ${fmtSize(bytes.length)} — all ${csvCount} CSV(s) in one zip</span></div>`;
+    `<span class="dl-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-csv"/></svg></span>` +
+    `<div class="n">Workbook<span class="s">${esc(filename)} · ${fmtSize(bytes.length)} — every ledger, dashboard &amp; reconciliation in one Excel file</span></div>`;
 
   const a = document.createElement("a");
   a.className = "btn";
   a.href = url;
   a.download = filename;
-  a.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-download"/></svg>Download all`;
+  a.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-download"/></svg>Download Excel`;
   div.appendChild(a);
   resultsEl.appendChild(div);
 }

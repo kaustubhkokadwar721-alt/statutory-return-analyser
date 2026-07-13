@@ -416,6 +416,17 @@ body {
 .tcell { display: inline-flex; align-items: center; gap: 7px; }
 .tcell svg { width: 15px; height: 15px; flex: none; fill: none; stroke: var(--s, var(--ink-soft)); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 
+/* ---- Document-kind badges (Return / Challan / Payment / Arrears) ---- */
+.kcell {
+  display: inline-block; padding: 1px 8px; border-radius: 5px;
+  font-size: 10px; font-weight: 600; letter-spacing: .04em;
+  border: 1px solid var(--rule); color: var(--ink-soft); background: var(--sink);
+}
+.kcell.k-return  { color: var(--green-2); border-color: color-mix(in oklch, var(--green-2) 35%, var(--panel)); background: color-mix(in oklch, var(--green-2) 8%, var(--panel)); }
+.kcell.k-challan { color: var(--seal);    border-color: color-mix(in oklch, var(--seal) 35%, var(--panel));    background: color-mix(in oklch, var(--seal) 8%, var(--panel)); }
+.kcell.k-payment { color: var(--amber);   border-color: color-mix(in oklch, var(--amber) 38%, var(--panel));   background: color-mix(in oklch, var(--amber) 12%, var(--panel)); }
+.kcell.k-arrears { color: var(--ink-faint); }
+
 /* ---- Status pills ---- */
 .pill {
   display: inline-block; padding: 2px 9px; font-size: 10.5px; font-weight: 600; letter-spacing: .04em;

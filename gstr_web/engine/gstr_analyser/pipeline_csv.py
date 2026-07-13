@@ -12,44 +12,81 @@ from .gstr1.parser import parse_gstr1
 from .gstr1.checks import run_sanity_checks_gstr1
 from .gstr3b.parser import parse_complete_gstr3b
 from .gstr3b.checks import run_sanity_checks_gstr3b
-from .compliance_parsers import parse_esic, parse_pf, parse_ptrc, parse_tds
+from .compliance_parsers import (
+    parse_esic, parse_pf, parse_pf_ecr, parse_pf_arrears, parse_pf_payment,
+    parse_ptrc, parse_ptrc_challan, parse_tds,
+)
+from .ui import write_sheet
 from .shipping_bill import parse_shipping_bill, sb_flat_row, sb_item_rows
 
 
 # ── Return-type detection ─────────────────────────────────────────────────────
 
-def detect_return_type(text: str) -> str:
+def detect_document(text: str):
+    """Classify a PDF as (head, kind).
+
+    head ∈ {SB, GSTR1, GSTR3B, PF, ESIC, PTRC, TDS, Unknown}
+    kind ∈ {Return, Challan, Payment, Arrears, Unknown}
+
+    A statutory head carries several document kinds that serve different
+    purposes: the Return (the filing), the Challan (the payment demand), the
+    Payment receipt (proof of payment), and Arrears (supplementary). Detection
+    must survive layout quirks — notably EPFO prints "EMPLOYEE'S PROVIDENT FUND"
+    (singular) on returns/receipts but "EMPLOYEES' PROVIDENT FUND" (plural) on
+    challans, so we match the apostrophe-agnostic "PROVIDENT FUND ORGANISATION".
+    """
     t = text.upper()
 
     # Customs export documents — ICEGATE shipping bill
     if "INDIAN CUSTOMS EDI SYSTEM" in t or "SHIPPING BILL SUMMARY" in t:
-        return "SB"
+        return "SB", "Return"
 
     # GSTR forms — very specific markers
     if "GSTR-3B" in t or "GSTR3B" in t:
-        return "GSTR3B"
+        return "GSTR3B", "Return"
     if "GSTR-1" in t or "GSTR1" in t:
-        return "GSTR1"
+        return "GSTR1", "Return"
 
-    # ESIC — unique label
+    # PF / EPFO — apostrophe-agnostic; resolve the kind from the doc's own header
+    is_pf = (
+        "PROVIDENT FUND ORGANISATION" in t
+        or "COMBINED CHALLAN OF A/C" in t
+        or ("PAYMENT CONFIRMATION RECEIPT" in t and "ESTABLISHMENT ID" in t)
+    )
+    if is_pf:
+        if "COMBINED CHALLAN OF A/C" in t:
+            return "PF", "Challan"
+        if "PAYMENT CONFIRMATION RECEIPT" in t:
+            return "PF", "Payment"
+        if "ARREAR" in t and "ELECTRONIC CHALLAN CUM RETURN" not in t:
+            return "PF", "Arrears"
+        if "ELECTRONIC CHALLAN CUM RETURN" in t or "(ECR)" in t:
+            return "PF", "Return"
+        return "PF", "Challan"
+
+    # ESIC — unique label (the ESIC doc is itself a challan/payment)
     if "CHALLAN PERIOD:" in t and ("EMPLOYEE'S STATE INSURANCE" in t or "ESIC" in t):
-        return "ESIC"
+        return "ESIC", "Challan"
 
-    # PF — EPFO header + establishment code
-    if "EMPLOYEES' PROVIDENT FUND" in t or ("ESTABLISHMENT CODE" in t and "A/C" in t):
-        return "PF"
+    # PTRC — Maharashtra profession tax: FORM_IIIB return vs MTR-6 challan
+    is_ptrc = (
+        "FORM_IIIB" in t or "PROFESSION TAX" in t or "PTRC" in t
+        or ("MTR FORM" in t and "00280012" in t)
+    )
+    if is_ptrc:
+        if "FORM_IIIB" in t or "ELECTRONIC RETURN UNDER" in t:
+            return "PTRC", "Return"
+        if "MTR FORM" in t or "00280012" in t:
+            return "PTRC", "Challan"
+        return "PTRC", "Return"
 
-    # PTRC — Maharashtra FORM_IIIB / Profession Tax
-    if "FORM_IIIB" in t or "PROFESSION TAX" in t or "PTRC" in t:
-        return "PTRC"
-
-    # TDS — Income Tax challan (ITNS 280/281/282 etc.)
+    # TDS — Income Tax challan (ITNS 280/281/282 etc.); the doc is a challan
     if ("INCOME TAX DEPARTMENT" in t or "CHALLAN RECEIPT" in t) and (
         "TAN" in t or "DATE OF DEPOSIT" in t or "NATURE OF PAYMENT" in t
     ):
-        return "TDS"
+        return "TDS", "Challan"
 
-    return "Unknown"
+    return "Unknown", "Unknown"
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────
@@ -81,6 +118,138 @@ def _month_idx(ts) -> int:
         return cal_m - 3 if cal_m >= 4 else cal_m + 9
     except Exception:
         return 0
+
+
+def _consolidated_row(res: dict, fname: str, flags_list: list, status: str | None = None) -> dict:
+    """Build one unified ledger row from a parser result dict.
+
+    All compliance parsers return the same core keys (ReturnType, DocKind,
+    EntityID, EntityName, FY, PeriodDate, PrimaryAmount, DocRef, FilingDate);
+    this collapses them onto the consolidated contract so every head/kind lands
+    on one schema.
+    """
+    pd_date = res.get("PeriodDate")
+    is_nat = pd_date is None
+    try:
+        is_nat = is_nat or pd.isna(pd_date)
+    except Exception:
+        pass
+    if status is None:
+        status = "Review" if flags_list else "OK"
+    return {
+        "ReturnType":    res.get("ReturnType"),
+        "DocKind":       res.get("DocKind", "Return"),
+        "EntityID":      res.get("EntityID", ""),
+        "EntityName":    res.get("EntityName", ""),
+        "FY":            res.get("FY", "Unknown"),
+        "PeriodDate":    _fmt_date(pd_date) if not is_nat else None,
+        "MonthName":     pd.Timestamp(pd_date).strftime("%B") if not is_nat else "Unknown",
+        "MonthIndex":    _month_idx(pd_date) if not is_nat else 0,
+        "Status":        status,
+        "Flags":         "; ".join(flags_list),
+        "PrimaryAmount": res.get("PrimaryAmount", 0) or 0,
+        "DocRef":        res.get("DocRef", ""),
+        "FilingDate":    res.get("FilingDate", None),
+        "SourceFile":    fname,
+    }
+
+
+# ── Reconciliation ────────────────────────────────────────────────────────────
+# Per statutory head, which DocKind is the "demand" (obligation) and which is the
+# "settlement" (payment). PF: the Combined Challan is the demand, the Payment
+# receipt settles it (the ECR is a sub-component, not the full remittance).
+# PTRC: the FORM_IIIB Return is the demand, the MTR-6 Challan settles it.
+RECON_ROLES = {
+    "PF":   ("Challan", "Payment"),
+    "PTRC": ("Return",  "Challan"),
+}
+
+
+def _reconcile(records: list) -> list:
+    """Tie out each period's declared liability against what settled it.
+
+    Groups by (head, entity, period) for heads that carry more than one DocKind,
+    compares demand vs settlement, and folds a flag back onto the member records
+    so a mismatch is visible in the ledger too. Returns the reconciliation rows.
+    """
+    df = pd.DataFrame(records)
+    if df.empty or "DocKind" not in df.columns:
+        return []
+    nkinds = df.groupby("ReturnType")["DocKind"].nunique()
+    multi = set(nkinds[nkinds > 1].index)
+    if not multi:
+        return []
+
+    sub = df[df["ReturnType"].isin(multi)].copy()
+    # A document whose period could not be parsed must get its own bucket — never
+    # pool it with other undated docs, or we'd fabricate a cross-period mismatch.
+    sub["_gkey"] = sub["PeriodDate"].where(
+        sub["PeriodDate"].notna(), "~undated~" + sub["SourceFile"].astype(str))
+
+    recon = []
+    for (head, ent, gkey), g in sub.groupby(["ReturnType", "EntityID", "_gkey"], dropna=False):
+        def amt(kind):
+            return float(g.loc[g["DocKind"] == kind, "PrimaryAmount"].fillna(0).sum())
+        ret, chal, pay, arr = amt("Return"), amt("Challan"), amt("Payment"), amt("Arrears")
+        demand_kind, settle_kind = RECON_ROLES.get(head, ("Return", "Challan"))
+        demand     = {"Return": ret, "Challan": chal, "Payment": pay}[demand_kind]
+        settlement = {"Return": ret, "Challan": chal, "Payment": pay}[settle_kind]
+        if demand <= 0 and settlement <= 0:
+            continue
+        delta = round(settlement - demand, 2)
+        tol   = max(1.0, 0.01 * demand)
+        if demand > 0 and settlement > 0:
+            status = "Matched" if abs(delta) <= tol else "Mismatch"
+        elif demand > 0:
+            status = "Unpaid?"
+        else:
+            status = "No demand doc"
+        # Ledger tag is a period-level marker, NOT a per-row delta: when a period
+        # has (say) two challans against one return, each challan may be fine on
+        # its own — the discrepancy is the period's, so don't stamp Δ on each row.
+        # The exact Δ and doc count live in the Reconciliation sheet.
+        tag = {"Matched": None, "Mismatch": "UNRECONCILED",
+               "Unpaid?": "UNPAID?", "No demand doc": "NO DEMAND"}[status]
+
+        period_out = None if str(gkey).startswith("~undated~") else gkey
+        recon.append({
+            "ReturnType": head, "EntityID": ent, "PeriodDate": period_out,
+            "Docs": int(len(g)),
+            "Declared": round(demand, 2), "Return": round(ret, 2), "Challan": round(chal, 2),
+            "Payment": round(pay, 2), "Arrears": round(arr, 2),
+            "Delta": delta, "Status": status,
+        })
+        if tag:  # write the flag onto exactly this group's documents (SourceFile is unique per row)
+            files = set(g["SourceFile"])
+            for rec in records:
+                if rec.get("SourceFile") in files:
+                    rec["Flags"] = f'{rec["Flags"]}; {tag}'.strip("; ") if rec.get("Flags") else tag
+                    if rec.get("Status") == "OK":
+                        rec["Status"] = "Review"
+    return recon
+
+
+def _json_records(df) -> list:
+    """DataFrame → JSON-clean list of dicts (Timestamps→ISO strings, NaN→None)."""
+    if df is None or df.empty:
+        return []
+    clean = df.copy()
+    for c in clean.columns:
+        if pd.api.types.is_datetime64_any_dtype(clean[c]):
+            clean[c] = clean[c].dt.strftime("%Y-%m-%d")
+    clean = clean.astype(object).where(pd.notna(clean), None)
+    return clean.to_dict("records")
+
+
+def _detail_df(rlist: list):
+    """Build a per-head detail DataFrame with any Timestamp columns stringified."""
+    df = pd.DataFrame(rlist)
+    for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            df[col] = df[col].dt.strftime("%Y-%m-%d")
+        elif df[col].dtype == object:
+            df[col] = df[col].apply(lambda v: v.strftime("%Y-%m-%d") if isinstance(v, pd.Timestamp) else v)
+    return df
 
 
 # ── Main pipeline ─────────────────────────────────────────────────────────────
@@ -117,12 +286,12 @@ def run_unified_pipeline(
                     raise ValueError("PDF has no pages")
 
                 first_text = pdf.pages[0].extract_text() or ""
-                return_type = detect_return_type(first_text)
+                return_type, doc_kind = detect_document(first_text)
 
                 # If first page gave nothing, try full text
                 if return_type == "Unknown":
                     full_text = "\n".join(p.extract_text() or "" for p in pdf.pages)
-                    return_type = detect_return_type(full_text)
+                    return_type, doc_kind = detect_document(full_text)
 
                 # ── GSTR-1 ────────────────────────────────────────────────
                 if return_type == "GSTR1":
@@ -152,6 +321,7 @@ def run_unified_pipeline(
 
                     records.append({
                         "ReturnType":    "GSTR1",
+                        "DocKind":       "Return",
                         "EntityID":      meta.get("GSTIN", "Unknown"),
                         "EntityName":    meta.get("Legal_Name", "Unknown"),
                         "FY":            meta.get("FY", "Unknown"),
@@ -206,6 +376,7 @@ def run_unified_pipeline(
 
                     records.append({
                         "ReturnType":    "GSTR3B",
+                        "DocKind":       "Return",
                         "EntityID":      gstin,
                         "EntityName":    meta.get("Legal_Name", "Unknown"),
                         "FY":            meta.get("Year", "Unknown"),
@@ -239,80 +410,49 @@ def run_unified_pipeline(
                     res["SourceFile"] = fname
                     raw_details["ESIC"].append(res)
 
-                # ── PF ────────────────────────────────────────────────────
+                # ── PF (Challan / ECR-Return / Arrears / Payment) ─────────
                 elif return_type == "PF":
-                    res = parse_pf(pdf, fname)
+                    if doc_kind == "Return":
+                        res = parse_pf_ecr(pdf, fname)
+                    elif doc_kind == "Arrears":
+                        res = parse_pf_arrears(pdf, fname)
+                    elif doc_kind == "Payment":
+                        res = parse_pf_payment(pdf, fname)
+                    else:
+                        res = parse_pf(pdf, fname)      # Combined Challan
                     res["SourceFile"] = fname
 
                     flags_list = []
                     if res["EntityID"] in ("Unknown", ""):
                         flags_list.append("ENTITY?")
-                    if res["PeriodDate"] is None:
+                    if res.get("PeriodDate") is None:
                         flags_list.append("PERIOD?")
-                    if res.get("PF_Admin_AC02", 0) == 0 and res.get("EDLI_Admin_AC22", 0) == 0:
-                        flags_list.append("NO ADMIN")
-                    ee = res.get("Employee_EPF_AC01", 0)
-                    er = res.get("Employer_EPF_AC01", 0) + res.get("Employer_EPS_AC10", 0)
-                    if er > 0 and abs(ee - er) / max(er, 1) > 0.05:
-                        flags_list.append("EE<>ER?")
+                    if not res.get("PrimaryAmount"):
+                        flags_list.append("AMT?")
+                    # challan-only internal check: employee vs employer EPF symmetry
+                    if res.get("DocKind") == "Challan":
+                        ee = res.get("Employee_EPF_AC01", 0)
+                        er = res.get("Employer_EPF_AC01", 0) + res.get("Employer_EPS_AC10", 0)
+                        if er > 0 and abs(ee - er) / max(er, 1) > 0.05:
+                            flags_list.append("EE<>ER?")
 
-                    flags  = "; ".join(flags_list)
-                    status = "Review" if flags_list else "OK"
-                    primary_amt = sum(res.get(k, 0) for k in (
-                        "Employer_EPF_AC01", "Employer_EPS_AC10", "Employer_EDLI_AC21",
-                        "PF_Admin_AC02", "EDLI_Admin_AC22", "Employee_EPF_AC01"
-                    ))
-                    pd_date = res["PeriodDate"]
-
-                    records.append({
-                        "ReturnType":    "PF",
-                        "EntityID":      res["EntityID"],
-                        "EntityName":    res["EntityName"],
-                        "FY":            res["FY"],
-                        "PeriodDate":    _fmt_date(pd_date),
-                        "MonthName":     pd.Timestamp(pd_date).strftime("%B") if pd_date else "Unknown",
-                        "MonthIndex":    _month_idx(pd_date),
-                        "Status":        status,
-                        "Flags":         flags,
-                        "PrimaryAmount": primary_amt,
-                        "DocRef":        res.get("DocRef", ""),
-                        "FilingDate":    res.get("FilingDate", None),
-                        "SourceFile":    fname,
-                    })
+                    records.append(_consolidated_row(res, fname, flags_list))
                     raw_details["PF"].append(res)
 
-                # ── PTRC ──────────────────────────────────────────────────
+                # ── PTRC (FORM_IIIB Return / MTR-6 Challan) ────────────────
                 elif return_type == "PTRC":
-                    res = parse_ptrc(pdf, fname)
+                    res = parse_ptrc_challan(pdf, fname) if doc_kind == "Challan" else parse_ptrc(pdf, fname)
                     res["SourceFile"] = fname
 
                     flags_list = []
                     if res["EntityID"] in ("Unknown", ""):
                         flags_list.append("TIN?")
-                    if res["PeriodDate"] is None:
+                    if res.get("PeriodDate") is None:
                         flags_list.append("PERIOD?")
-                    if res.get("PT Paid", 0) <= 0:
+                    if not res.get("PrimaryAmount"):
                         flags_list.append("AMT?")
 
-                    flags  = "; ".join(flags_list)
-                    status = "Review" if flags_list else "OK"
-                    pd_date = res["PeriodDate"]
-
-                    records.append({
-                        "ReturnType":    "PTRC",
-                        "EntityID":      res["EntityID"],
-                        "EntityName":    res["EntityName"],
-                        "FY":            res["FY"],
-                        "PeriodDate":    _fmt_date(pd_date),
-                        "MonthName":     pd.Timestamp(pd_date).strftime("%B") if pd_date else "Unknown",
-                        "MonthIndex":    _month_idx(pd_date),
-                        "Status":        status,
-                        "Flags":         flags,
-                        "PrimaryAmount": res.get("PT Paid", 0),
-                        "DocRef":        res.get("DocRef", ""),
-                        "FilingDate":    res.get("FilingDate", None),
-                        "SourceFile":    fname,
-                    })
+                    records.append(_consolidated_row(res, fname, flags_list))
                     raw_details["PTRC"].append(res)
 
                 # ── TDS ───────────────────────────────────────────────────
@@ -340,6 +480,7 @@ def run_unified_pipeline(
 
                     records.append({
                         "ReturnType":    "TDS",
+                        "DocKind":       "Challan",
                         "EntityID":      res["EntityID"],
                         "EntityName":    res["EntityName"],
                         "FY":            res["FY"],
@@ -382,6 +523,7 @@ def run_unified_pipeline(
                     leo = ((doc.get("process") or {}).get("leo") or {})
                     records.append({
                         "ReturnType":    "SB",
+                        "DocKind":       "Return",
                         "EntityID":      doc.get("iec", "Unknown"),
                         "EntityName":    (doc.get("exporter") or {}).get("name", "Unknown"),
                         "FY":            fy,
@@ -450,6 +592,7 @@ def run_unified_pipeline(
 
             records.append({
                 "ReturnType":    "ESIC",
+                "DocKind":       "Challan",
                 "EntityID":      row.get("EntityID", ""),
                 "EntityName":    row.get("EntityName", ""),
                 "FY":            row["FY"],
@@ -465,86 +608,64 @@ def run_unified_pipeline(
             })
         raw_details["ESIC"] = df_esic.to_dict("records")
 
-    # ── Write CSVs ────────────────────────────────────────────────────────────
-    output_files = []
+    # ── Reconcile declared vs paid (mutates records' Flags/Status on mismatch) ──
+    reconciliation = _reconcile(records)
 
-    if records:
-        df_all = pd.DataFrame(records)
-        # Normalise FilingDate to ISO across all return types (GSTR uses DD/MM/YYYY)
+    # ── Build the consolidated ledger ──
+    df_all = pd.DataFrame(records)
+    if not df_all.empty:
+        # Normalise FilingDate to ISO across all heads (GSTR uses DD/MM/YYYY)
         if "FilingDate" in df_all.columns:
             df_all["FilingDate"] = pd.to_datetime(
                 df_all["FilingDate"], format="mixed", dayfirst=True, errors="coerce"
             ).dt.strftime("%Y-%m-%d")
-        df_all = df_all.sort_values(["ReturnType", "FY", "MonthIndex", "EntityID"])
-        path_all = os.path.join(output_dir, "All_Returns_Consolidated.csv")
-        df_all.to_csv(path_all, index=False)
-        output_files.append({
-            "label": "Consolidated Ledger",
-            "desc":  "All parsed returns — unified contract schema.",
-            "filename": "All_Returns_Consolidated.csv",
-            "path": path_all,
-        })
+        # Column order: identity first, then status/amounts
+        lead = ["ReturnType", "DocKind", "EntityID", "EntityName", "FY",
+                "PeriodDate", "MonthName", "Status", "Flags", "PrimaryAmount",
+                "DocRef", "FilingDate", "SourceFile"]
+        df_all = df_all[[c for c in lead if c in df_all.columns]
+                        + [c for c in df_all.columns if c not in lead]]
+        df_all = df_all.sort_values(["ReturnType", "DocKind", "FY", "MonthIndex", "EntityID"])
 
-        df_dash = df_all.groupby(["ReturnType", "FY"]).agg(
+    # ── Dashboard: grouped by head × DocKind × FY (kinds counted separately) ──
+    df_dash = pd.DataFrame()
+    if not df_all.empty:
+        df_dash = df_all.groupby(["ReturnType", "DocKind", "FY"]).agg(
             Records          = ("Status", "count"),
             OK               = ("Status", lambda s: (s == "OK").sum()),
             Review           = ("Status", lambda s: (s == "Review").sum()),
             Errors           = ("Status", lambda s: (s == "Error").sum()),
             Periods          = ("PeriodDate", "nunique"),
-            TotalPrimaryAmt  = ("PrimaryAmount", "sum"),
+            TotalAmount      = ("PrimaryAmount", "sum"),
         ).reset_index()
-        df_dash["FlagRate"] = ((df_dash["Review"] + df_dash["Errors"]) / df_dash["Records"]).round(3)
-        path_dash = os.path.join(output_dir, "Dashboard_Summary.csv")
-        df_dash.to_csv(path_dash, index=False)
-        output_files.append({
-            "label": "Dashboard Summary",
-            "desc":  "Filing counts, pass rates, totals grouped by return type and FY.",
-            "filename": "Dashboard_Summary.csv",
-            "path": path_dash,
-        })
 
-    for rtype, rlist in raw_details.items():
-        if not rlist:
-            continue
-        df_det = pd.DataFrame(rlist)
-        # Safely format any Timestamp columns
-        for col in df_det.columns:
-            if pd.api.types.is_datetime64_any_dtype(df_det[col]):
-                df_det[col] = df_det[col].dt.strftime("%Y-%m-%d")
-            elif df_det[col].dtype == object:
-                df_det[col] = df_det[col].apply(
-                    lambda v: v.strftime("%Y-%m-%d") if isinstance(v, pd.Timestamp) else v
-                )
-        path_det = os.path.join(output_dir, f"{rtype}_Details.csv")
-        df_det.to_csv(path_det, index=False)
-        output_files.append({
-            "label": f"{rtype} Details",
-            "desc":  f"Raw parsed fields for {rtype} returns.",
-            "filename": f"{rtype}_Details.csv",
-            "path": path_det,
-        })
-
-    if sb_items:
-        df_items = pd.DataFrame(sb_items)
-        path_items = os.path.join(output_dir, "SB_Items.csv")
-        df_items.to_csv(path_items, index=False)
-        output_files.append({
-            "label": "Shipping Bill Items",
-            "desc":  "Line items across all shipping bills — HS code, qty, FOB.",
-            "filename": "SB_Items.csv",
-            "path": path_items,
-        })
-
-    if errors:
-        df_err = pd.DataFrame(errors)
-        path_err = os.path.join(output_dir, "Parsing_Errors.csv")
-        df_err.to_csv(path_err, index=False)
-        output_files.append({
-            "label": "Parsing Errors",
-            "desc":  "Files that failed parsing.",
-            "filename": "Parsing_Errors.csv",
-            "path": path_err,
-        })
+    # ── Write ONE Excel workbook (all sheets) — the sole deliverable ──
+    workbook_name = "Statutory_Returns.xlsx"
+    path_xlsx = os.path.join(output_dir, workbook_name)
+    with pd.ExcelWriter(path_xlsx, engine="xlsxwriter") as xw:
+        if not df_all.empty:
+            write_sheet(xw, df_all, "Consolidated", sort=False)
+        if not df_dash.empty:
+            write_sheet(xw, df_dash, "Dashboard", sort=False)
+        if reconciliation:
+            write_sheet(xw, pd.DataFrame(reconciliation), "Reconciliation", sort=False)
+        for rtype, rlist in raw_details.items():
+            if rlist:
+                write_sheet(xw, _detail_df(rlist), rtype, sort=False)
+        if sb_items:
+            write_sheet(xw, pd.DataFrame(sb_items), "SB_Items", sort=False)
+        if errors:
+            write_sheet(xw, pd.DataFrame(errors), "Parsing_Errors", sort=False)
+        # xlsxwriter needs at least one visible sheet
+        if df_all.empty and not errors and not sb_items:
+            xw.book.add_worksheet("Empty")
 
     log("3", f"Pipeline complete. {len(records)} records, {len(errors)} errors.")
-    return output_files
+    return {
+        "workbook":       path_xlsx,
+        "workbook_name":  workbook_name,
+        "consolidated":   _json_records(df_all),
+        "dashboard":      _json_records(df_dash),
+        "reconciliation": reconciliation,
+        "errors":         errors,
+    }

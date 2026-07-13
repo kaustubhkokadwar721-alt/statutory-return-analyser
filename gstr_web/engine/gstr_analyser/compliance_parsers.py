@@ -70,6 +70,44 @@ def _row_nums(text: str, pattern: str) -> list:
     nums = [to_float(n) for n in re.findall(r"[\d,]+(?:\.\d+)?", rest)]
     return (nums + [0.0] * 6)[:6]
 
+def _to_month_year(s: str):
+    """Parse 'JUL-2025' / 'JUL 2025' / 'July 2025' → ('JUL', 2025); else ('Unknown', 0)."""
+    m = re.search(r"([A-Za-z]{3,9})[-\s]+(\d{4})", s or "")
+    if not m:
+        return "Unknown", 0
+    mon = m.group(1).upper()[:3]
+    if mon not in MONTH_INDICES:
+        return "Unknown", 0
+    return mon, int(m.group(2))
+
+def _fy_from_date(dt):
+    """Return (FY string, fy_start) for a pandas Timestamp on the Apr–Mar Indian FY."""
+    if dt is None:
+        return "Unknown", 0
+    try:
+        y, mth = dt.year, dt.month
+    except Exception:
+        return "Unknown", 0
+    fy_start = y if mth >= 4 else y - 1
+    return f"{fy_start}-{str(fy_start + 1)[-2:]}", fy_start
+
+def _strip_ms(name: str) -> str:
+    """Drop the "M/s" / "M S" courtesy prefix Maharashtra forms print before a dealer name."""
+    return re.sub(r"^M\s*/?\s*[Ss]\.?\s+", "", (name or "")).strip()
+
+def _parse_date(s: str):
+    """Best-effort parse of dd-mm-yyyy / dd/mm/yyyy / dd-Mon-yyyy → Timestamp or None."""
+    s = (s or "").strip()
+    for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%d-%b-%Y", "%d/%b/%Y", "%d %b %Y"):
+        try:
+            return pd.to_datetime(s, format=fmt)
+        except Exception:
+            pass
+    try:
+        return pd.to_datetime(s, dayfirst=True)
+    except Exception:
+        return None
+
 
 # ── TDS ────────────────────────────────────────────────────────────────────────
 # PDF: "Key : Value" lines.
@@ -291,12 +329,24 @@ def parse_pf(pdf, fname: str) -> dict:
     edli_admin_ac22    = admin_nums[4]
     employee_epf_ac01  = employee_nums[0]
 
+    # ── Grand total (the full remittance — used for reconciliation) ──
+    grand_total = 0.0
+    gt_m = re.search(r"Grand Total\s*:([^\n]*)", full_text, re.IGNORECASE)
+    if gt_m:
+        gt_nums = re.findall(r"[\d,]+(?:\.\d+)?", gt_m.group(1))
+        if gt_nums:
+            grand_total = to_float(gt_nums[-1])
+    if grand_total <= 0:
+        grand_total = (employer_epf_ac01 + employer_eps_ac10 + employer_edli_ac21
+                       + pf_admin_ac02 + edli_admin_ac22 + employee_epf_ac01)
+
     # ── Registration / filing metadata ──
     trrn_m = re.search(r"TRRN\s*:?\s*(\d+)", full_text, re.IGNORECASE)
     trrn   = trrn_m.group(1) if trrn_m else ""
 
     return {
         "ReturnType":           "PF",
+        "DocKind":              "Challan",
         "EntityID":             estab_code,
         "EntityName":           estab_name,
         "FY":                   fy_str,
@@ -310,8 +360,159 @@ def parse_pf(pdf, fname: str) -> dict:
         "PF_Admin_AC02":        pf_admin_ac02,
         "EDLI_Admin_AC22":      edli_admin_ac22,
         "Employee_EPF_AC01":    employee_epf_ac01,
+        "Grand_Total":          grand_total,
+        "PrimaryAmount":        grand_total,
         "PeriodDate":           _period_date(month_upper, fy_start),
         "Month":                month_val,
+    }
+
+
+# ── PF: ECR (Electronic Challan cum Return) — the member-wise return ──────────────
+# Headline totals live on page 1 in "Label  Value" (space-separated) form.
+
+def _pf_totals(text: str):
+    """Extract the three EPFO contribution totals shared by ECR & Arrears docs."""
+    def grab(label):
+        m = re.search(rf"{label}\s+([\d,]+(?:\.\d+)?)", text, re.IGNORECASE)
+        return to_float(m.group(1)) if m else 0.0
+    epf     = grab(r"Total EPF Contribution")
+    eps     = grab(r"Total EPS Contribution")
+    epf_eps = grab(r"Total EPF-EPS Contribution")
+    return epf, eps, epf_eps
+
+
+def _pf_entity(text: str):
+    name_m = re.search(r"Name of Establishment\s+(.+)", text, re.IGNORECASE)
+    id_m   = re.search(r"Establishment Id\s+([A-Z0-9]+)", text, re.IGNORECASE)
+    name = re.sub(r"\s+", " ", name_m.group(1)).strip() if name_m else "Unknown"
+    name = re.split(r"\bLIN\b", name, flags=re.IGNORECASE)[0].strip()
+    return (id_m.group(1).strip() if id_m else "Unknown"), (name or "Unknown")
+
+
+def parse_pf_ecr(pdf, fname: str) -> dict:
+    text = _page_text(pdf)
+    estab_code, estab_name = _pf_entity(text)
+
+    wage_m = re.search(r"Wage Month\s+([A-Za-z]{3,9}[-\s]\d{4})", text, re.IGNORECASE)
+    month_upper, raw_year = _to_month_year(wage_m.group(1) if wage_m else "")
+    fy_str, fy_start = _fy_from_month_year(month_upper, raw_year)
+
+    epf, eps, epf_eps = _pf_totals(text)
+    total_contribution = epf + eps + epf_eps
+
+    members_m = re.search(r"Total Members\s+(\d+)", text, re.IGNORECASE)
+    ecr_m     = re.search(r"ECR Id\s+(\d+)", text, re.IGNORECASE)
+    trrn_m    = re.search(r"TRRN\s*(?:Number)?\s*:?\s*(\d+)", text, re.IGNORECASE)
+    upl_m     = re.search(r"Uploaded Date Time\s+(\d{2}[-/][A-Za-z0-9]+[-/]\d{4})", text, re.IGNORECASE)
+
+    return {
+        "ReturnType":            "PF",
+        "DocKind":               "Return",
+        "EntityID":              estab_code,
+        "EntityName":            estab_name,
+        "FY":                    fy_str,
+        "Total_EPF":             epf,
+        "Total_EPS":             eps,
+        "Total_EPF_EPS":         epf_eps,
+        "Total_Contribution":    total_contribution,
+        "PrimaryAmount":         total_contribution,
+        "Total_Members":         int(members_m.group(1)) if members_m else 0,
+        "ECR_Id":                ecr_m.group(1) if ecr_m else "",
+        "TRRN":                  trrn_m.group(1) if trrn_m else "",
+        "DocRef":                (ecr_m.group(1) if ecr_m else "") or (trrn_m.group(1) if trrn_m else ""),
+        "FilingDate":            _norm_date(upl_m.group(1)) if upl_m else None,
+        "PeriodDate":            _period_date(month_upper, fy_start),
+        "Month":                 month_upper.title() if month_upper != "UNKNOWN" else "Unknown",
+    }
+
+
+def parse_pf_arrears(pdf, fname: str) -> dict:
+    text = _page_text(pdf)
+    estab_code, estab_name = _pf_entity(text)
+
+    from_m = re.search(r"From Date\s+([A-Za-z]{3,9}[-\s]\d{4})", text, re.IGNORECASE)
+    month_upper, raw_year = _to_month_year(from_m.group(1) if from_m else "")
+    fy_str, fy_start = _fy_from_month_year(month_upper, raw_year)
+
+    epf, eps, epf_eps = _pf_totals(text)
+    total_contribution = epf + eps + epf_eps
+
+    arr_m     = re.search(r"Arrear Id\s+(\d+)", text, re.IGNORECASE)
+    members_m = re.search(r"Total Members\s+(\d+)", text, re.IGNORECASE)
+    disb_m    = re.search(r"Disbursement Date\s+(\d{2}[-/][A-Za-z0-9]+[-/]\d{4})", text, re.IGNORECASE)
+
+    return {
+        "ReturnType":            "PF",
+        "DocKind":               "Arrears",
+        "EntityID":              estab_code,
+        "EntityName":            estab_name,
+        "FY":                    fy_str,
+        "Total_EPF":             epf,
+        "Total_EPS":             eps,
+        "Total_EPF_EPS":         epf_eps,
+        "Total_Contribution":    total_contribution,
+        "PrimaryAmount":         total_contribution,
+        "Total_Members":         int(members_m.group(1)) if members_m else 0,
+        "Arrear_Id":             arr_m.group(1) if arr_m else "",
+        "DocRef":                arr_m.group(1) if arr_m else "",
+        "FilingDate":            _norm_date(disb_m.group(1)) if disb_m else None,
+        "PeriodDate":            _period_date(month_upper, fy_start),
+        "Month":                 month_upper.title() if month_upper != "UNKNOWN" else "Unknown",
+    }
+
+
+def parse_pf_payment(pdf, fname: str) -> dict:
+    text = _page_text(pdf)
+
+    def kv(key_pattern: str) -> str:
+        m = re.search(rf"{key_pattern}\s*:\s*(.+)", text, re.IGNORECASE)
+        return m.group(1).strip() if m else ""
+
+    def kv_amt(key_pattern: str) -> float:
+        raw = kv(key_pattern)
+        m = re.search(r"[\d,]+(?:\.\d+)?", raw)
+        return to_float(m.group(0)) if m else 0.0
+
+    estab_id   = kv(r"Establishment ID") or "Unknown"
+    estab_name = kv(r"Establishment Name") or "Unknown"
+    month_upper, raw_year = _to_month_year(kv(r"Wage Month"))
+    fy_str, fy_start = _fy_from_month_year(month_upper, raw_year)
+
+    total   = kv_amt(r"Total Amount \(Rs\)")
+    ac1     = kv_amt(r"Account-1 Amount \(Rs\)")
+    ac2     = kv_amt(r"Account-2 Amount \(Rs\)")
+    ac10    = kv_amt(r"Account-10 Amount \(Rs\)")
+    ac21    = kv_amt(r"Account-21 Amount \(Rs\)")
+    ac22    = kv_amt(r"Account-22 Amount \(Rs\)")
+
+    trrn    = kv(r"TRRN(?:\s*No)?") or ""
+    trrn    = re.sub(r"[^0-9].*$", "", trrn).strip()
+    crn     = kv(r"CRN")
+    status  = kv(r"Challan Status")
+    bank    = kv(r"Payment Confirmation Bank")
+    pay_dt  = kv(r"Payment Date")
+
+    return {
+        "ReturnType":            "PF",
+        "DocKind":               "Payment",
+        "EntityID":              estab_id,
+        "EntityName":            estab_name,
+        "FY":                    fy_str,
+        "Total_Amount":          total,
+        "PrimaryAmount":         total,
+        "AC01":                  ac1,
+        "AC02":                  ac2,
+        "AC10":                  ac10,
+        "AC21":                  ac21,
+        "AC22":                  ac22,
+        "TRRN":                  trrn,
+        "CRN":                   crn,
+        "Challan_Status":        status,
+        "Bank":                  bank,
+        "DocRef":                trrn or crn,
+        "FilingDate":            _norm_date(pay_dt),
+        "PeriodDate":            _period_date(month_upper, fy_start),
+        "Month":                 month_upper.title() if month_upper != "UNKNOWN" else "Unknown",
     }
 
 
@@ -353,8 +554,7 @@ def parse_ptrc(pdf, fname: str) -> dict:
         block = re.sub(pat, " ", block, flags=re.IGNORECASE)
     block = re.sub(r"\b\d+\b", " ", block)             # drop stray box numbers
     block = re.sub(r"[^A-Za-z&/.,\-() ]", " ", block)  # keep name characters only
-    company_name = re.sub(r"\s+", " ", block).strip()
-    company_name = re.sub(r"^M\s*/?\s*[Ss]\.?\s+", "", company_name).strip()  # drop M/s courtesy
+    company_name = _strip_ms(re.sub(r"\s+", " ", block).strip())
     if not company_name:
         company_name = "Unknown"
 
@@ -430,6 +630,7 @@ def parse_ptrc(pdf, fname: str) -> dict:
 
     return {
         "ReturnType":        "PTRC",
+        "DocKind":           "Return",
         "EntityID":          tin_val,
         "EntityName":        company_name,
         "FY":                fy_str,
@@ -437,6 +638,7 @@ def parse_ptrc(pdf, fname: str) -> dict:
         "Total Tax Payable": total_tax,
         "Net Payable":       net_payable,
         "PT Paid":           pt_paid,
+        "PrimaryAmount":     pt_paid,
         "PeriodDate":        period_date,
         "Month":             period_month,
         # registration / filing metadata
@@ -451,6 +653,88 @@ def parse_ptrc(pdf, fname: str) -> dict:
         "Slab_Above10000_Count":   s4c, "Slab_Above10000_Amt":   s4a,
         "Slab_Exempt27A_Count":    s5c,
         "Total_Employees":         total_employees,
+    }
+
+
+# ── PTRC Challan (MTR Form 6) — the payment instrument ───────────────────────────
+# Two sub-layouts:
+#   v1 "MTR FORM NO.6":     Dept-ID <TIN>P; period as "01-05-2025 31-05-2025";
+#                           amounts as "Amount of Tax 0 … Advance Payment 12,800 … Total 12,800"
+#   v2 "MTR Form Number-6": TAX ID / TAN <TIN>P; "From 01/06/2025 To 30/06/2025";
+#                           "AMOUNT OF TAX 13000.00 … Total 13,000.00"
+
+def parse_ptrc_challan(pdf, fname: str) -> dict:
+    text = _page_text(pdf)
+
+    # ── TIN (strip trailing P/V registration suffix) ──
+    tin_m = re.search(
+        r"(?:Dept-ID|TAX ID\s*/\s*TAN(?:\s*\(If Any\))?)\s*[:\-]?\s*(\d{9,})",
+        text, re.IGNORECASE,
+    )
+    tin_val = tin_m.group(1) if tin_m else "Unknown"
+
+    # ── Company name (best-effort; reconciliation keys on TIN+period, not name) ──
+    name_m = (re.search(r"Full Name\s*(?:of)?\s*(?:the Dealer)?\s*[:\-]?\s*(M\s*/?\s*S[.\s].+)", text, re.IGNORECASE)
+              or re.search(r"Full Name\s*[:\-]?\s*(.+)", text, re.IGNORECASE))
+    company_name = "Unknown"
+    if name_m:
+        raw = re.split(r"\b(?:From|To|Location|Flat|Premises)\b", name_m.group(1))[0]
+        raw = re.sub(r"[^A-Za-z&/.,\- ]", " ", raw)
+        company_name = _strip_ms(re.sub(r"\s+", " ", raw).strip()) or "Unknown"
+
+    # ── Period (the challan states its own From/To) ──
+    per_m = (re.search(r"From\s+(\d{2}/\d{2}/\d{4})\s+To\s+(\d{2}/\d{2}/\d{4})", text, re.IGNORECASE)
+             or re.search(r"(\d{2}-\d{2}-\d{4})\s+(\d{2}-\d{2}-\d{4})", text))
+    from_dt = _parse_date(per_m.group(1)) if per_m else None
+    period_date = pd.Timestamp(from_dt.year, from_dt.month, 1) if from_dt is not None else None
+    fy_str, _ = _fy_from_date(period_date)
+    month_name = period_date.strftime("%B") if period_date is not None else "Unknown"
+
+    # ── Amounts ──
+    def amt(label: str) -> float:
+        m = re.search(rf"{label}\s+([\d,]+(?:\.\d+)?)", text, re.IGNORECASE)
+        return to_float(m.group(1)) if m else 0.0
+
+    tax      = amt(r"Amount of Tax") or amt(r"AMOUNT OF TAX")
+    interest = amt(r"Interest Amount")
+    penalty  = amt(r"Penalty Amount")
+    advance  = amt(r"Advance Payment")
+    fees     = amt(r"\bFees\b")
+    total_m  = re.search(r"\bTotal\s+([\d,]+(?:\.\d+)?)", text, re.IGNORECASE)
+    total    = to_float(total_m.group(1)) if total_m else 0.0
+
+    # ── Refs ──
+    grn_m = re.search(r"GRN\s+([A-Z]{2}[A-Z0-9]{6,})", text)         # v2 real GRN; v1 has none
+    cin_m = re.search(r"CIN(?:\s*Ref)?\.?\s*No\.?\s*[:\-]?\s*(\w{10,})", text, re.IGNORECASE)
+    urn_m = re.search(r"(URN\w+)", text)
+    brn_m = re.search(r"BRN\s*No\.?\s*[:\-]?\s*(\d+)", text, re.IGNORECASE)
+    dt_m  = re.search(r"\bDate\s+(\d{2}[-/]\d{2}[-/]\d{4})", text)
+
+    doc_ref = (cin_m.group(1) if cin_m else "") or (grn_m.group(1) if grn_m else "") \
+              or (urn_m.group(1) if urn_m else "")
+
+    return {
+        "ReturnType":      "PTRC",
+        "DocKind":         "Challan",
+        "EntityID":        tin_val,
+        "EntityName":      company_name,
+        "FY":              fy_str,
+        "Period":          month_name + (f" {period_date.year}" if period_date is not None else ""),
+        "Amount_of_Tax":   tax,
+        "Interest":        interest,
+        "Penalty":         penalty,
+        "Advance_Payment": advance,
+        "Fees":            fees,
+        "Total":           total,
+        "PrimaryAmount":   total,
+        "GRN":             grn_m.group(1) if grn_m else "",
+        "CIN":             cin_m.group(1) if cin_m else "",
+        "URN":             urn_m.group(1) if urn_m else "",
+        "BRN":             brn_m.group(1) if brn_m else "",
+        "DocRef":          doc_ref,
+        "FilingDate":      _norm_date(dt_m.group(1)) if dt_m else None,
+        "PeriodDate":      period_date,
+        "Month":           month_name,
     }
 
 
