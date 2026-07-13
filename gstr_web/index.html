@@ -65,6 +65,13 @@
       <path d="M8.5 5.5H19"/>
       <path d="M16.2 2.7L19 5.5l-2.8 2.8"/>
     </symbol>
+    <!-- e-Way Bill: goods in transit (truck) -->
+    <symbol id="i-ewb" viewBox="0 0 24 24">
+      <path d="M3 6h11v9H3z"/>
+      <path d="M14 9h4l3 3v3h-7z"/>
+      <circle cx="7" cy="17.5" r="1.8"/>
+      <circle cx="17" cy="17.5" r="1.8"/>
+    </symbol>
     <!-- eBRC: bank-realisation certificate, sealed -->
     <symbol id="i-ebrc" viewBox="0 0 24 24">
       <path d="M5 3h10l4 4v8.5H5z"/>
@@ -143,12 +150,13 @@
         <li class="type t-ptrc"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-ptrc"/></svg></span><b>PTRC</b><i>Form IIIB</i></li>
         <li class="type t-sb"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-sb"/></svg></span><b>Shipping Bill</b><i>ICEGATE export</i></li>
         <li class="type t-ebrc"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-ebrc"/></svg></span><b>eBRC</b><i>DGFT realisation</i></li>
+        <li class="type t-ewb"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-ewb"/></svg></span><b>e-Way Bill</b><i>GST transit</i></li>
       </ul>
 
       <div id="drop" class="drop" role="button" tabindex="0" aria-label="Drop PDFs here or press Enter to browse">
         <span class="drop-ic"><svg viewBox="0 0 24 24"><use href="#i-upload"/></svg></span>
         <div class="drop-big">Drop PDFs here</div>
-        <div class="drop-small">any mix of the eight types · or click to browse</div>
+        <div class="drop-small">any mix of the nine types · or click to browse</div>
         <input type="file" id="picker" accept="application/pdf" multiple hidden>
       </div>
 

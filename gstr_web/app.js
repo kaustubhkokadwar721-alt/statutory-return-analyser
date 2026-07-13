@@ -91,6 +91,7 @@ const TYPE_META = {
   PTRC:   { icon: "i-ptrc",   cls: "t-ptrc",   label: "PTRC" },
   SB:     { icon: "i-sb",     cls: "t-sb",     label: "Ship. Bill" },
   EBRC:   { icon: "i-ebrc",   cls: "t-ebrc",   label: "eBRC" },
+  EWB:    { icon: "i-ewb",    cls: "t-ewb",    label: "e-Way Bill" },
 };
 function typeCell(rt) {
   const m = TYPE_META[rt];
