@@ -65,6 +65,13 @@
       <path d="M8.5 5.5H19"/>
       <path d="M16.2 2.7L19 5.5l-2.8 2.8"/>
     </symbol>
+    <!-- eBRC: bank-realisation certificate, sealed -->
+    <symbol id="i-ebrc" viewBox="0 0 24 24">
+      <path d="M5 3h10l4 4v8.5H5z"/>
+      <path d="M15 3v4h4"/>
+      <circle cx="12" cy="18.5" r="2.7"/>
+      <path d="M10 20.6l-1 2.4 3-1.3 3 1.3-1-2.4"/>
+    </symbol>
     <!-- UI glyphs -->
     <symbol id="i-upload" viewBox="0 0 24 24">
       <path d="M12 15.5V5"/>
@@ -103,7 +110,7 @@
       <span class="dot busy" id="dot"></span>
       <span id="statusText">Loading engine…</span>
     </div>
-    <div class="pledge-mini" title="Files never leave this device. No upload, no server, no network — every PDF is parsed in this browser via Python compiled to WebAssembly. Open DevTools → Network and watch it stay empty.">
+    <div class="pledge-mini" title="Files never leave this device. No upload, no server, no network - every PDF is parsed in this browser via Python compiled to WebAssembly. Open DevTools → Network and watch it stay empty.">
       <span class="stamp" aria-hidden="true">
         <svg viewBox="0 0 24 24"><use href="#i-logo"/></svg>
       </span>
@@ -135,12 +142,13 @@
         <li class="type t-esic"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-esic"/></svg></span><b>ESIC</b><i>Challan</i></li>
         <li class="type t-ptrc"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-ptrc"/></svg></span><b>PTRC</b><i>Form IIIB</i></li>
         <li class="type t-sb"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-sb"/></svg></span><b>Shipping Bill</b><i>ICEGATE export</i></li>
+        <li class="type t-ebrc"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-ebrc"/></svg></span><b>eBRC</b><i>DGFT realisation</i></li>
       </ul>
 
       <div id="drop" class="drop" role="button" tabindex="0" aria-label="Drop PDFs here or press Enter to browse">
         <span class="drop-ic"><svg viewBox="0 0 24 24"><use href="#i-upload"/></svg></span>
         <div class="drop-big">Drop PDFs here</div>
-        <div class="drop-small">any mix of the seven types · or click to browse</div>
+        <div class="drop-small">any mix of the eight types · or click to browse</div>
         <input type="file" id="picker" accept="application/pdf" multiple hidden>
       </div>
 
@@ -209,7 +217,7 @@
   if (typeof WebAssembly === "undefined") {
     msg = "This browser is too old to run the in-browser PDF engine (no WebAssembly). Use a current version of Chrome, Edge, Firefox or Safari.";
   } else if (window.location.protocol === "file:") {
-    msg = "Opened from a file:// URL — browsers block the engine here. Serve this folder over HTTP (e.g. `python -m http.server`) and open http://localhost:8000.";
+    msg = "Opened from a file:// URL - browsers block the engine here. Serve this folder over HTTP (e.g. `python -m http.server`) and open http://localhost:8000.";
   }
   if (msg) {
     var el = document.getElementById("statusText");

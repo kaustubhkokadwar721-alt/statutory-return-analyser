@@ -738,6 +738,91 @@ def parse_ptrc_challan(pdf, fname: str) -> dict:
     }
 
 
+# ── eBRC (Electronic Bank Realisation Certificate) ───────────────────────────────
+# DGFT "STATEMENT OF BANK REALISATION" — proof that an export invoice's foreign
+# payment was realised through a bank. Clean numbered fields (1–15).
+
+def parse_ebrc(pdf, fname: str) -> dict:
+    text = _page_text(pdf)
+
+    def after(label: str, pat: str = r"(.+)") -> str:
+        m = re.search(rf"{label}\s+{pat}", text, re.IGNORECASE)
+        return m.group(1).strip() if m else ""
+
+    firm    = after(r"Firm Name")
+    gstin_m = re.search(r"GSTIN\s*[-:]?\s*([0-9A-Z]{15})", text)
+    gstin   = gstin_m.group(1) if gstin_m else ""
+    iec     = after(r"\bIEC\b", r"(\w+)")
+    sb_no   = after(r"Shipping Bill\s*/\s*Invoice No\.?", r"(\w+)")
+    sb_date = after(r"Shipping Bill\s*/\s*Invoice Date", r"(\d{2}-\d{2}-\d{4})")
+    bank    = after(r"Bank Name")
+    bill_id = after(r"Bill ID No\.?", r"(\S+)")
+    gst_inv_no   = after(r"GST Invoice No", r"(\S+)")
+    gst_inv_date = after(r"GST Invoice Date", r"(\d{2}-\d{2}-\d{4})")
+
+    # BRC No + realisation date are label-anchored (their field NUMBER shifts
+    # between the two DGFT layouts, so never anchor on the number). The value
+    # sits on the "<n> <value>" line embedded in the wrapped label.
+    brc_m   = re.search(r"Bank Realisation Certificate[\s\S]{0,60}?([A-Z]{4}\d[0-9A-Z]{8,})", text, re.IGNORECASE)
+    brc_no  = brc_m.group(1) if brc_m else ""
+    real_m  = re.search(r"Date of Realisation of Money[\s\S]{0,40}?(\d{2}-\d{2}-\d{4})", text, re.IGNORECASE)
+    real_dt = real_m.group(1) if real_m else ""
+
+    total   = to_float(after(r"Total Realised Value", r"([\d,]+(?:\.\d+)?)"))
+    net     = to_float(after(r"Net Realised Value",   r"([\d,]+(?:\.\d+)?)"))
+    curr    = after(r"Currency of Realisation", r"([A-Z]{3})")
+    print_dt = after(r"Date and Time of Printing", r"(\d{2}-\d{2}-\d{4})")
+
+    # Deductions row: Commission / Discount / Insurance / Freight / Other
+    ded_m = re.search(r"Deductions\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)", text, re.IGNORECASE)
+    ded = [to_float(x) for x in ded_m.groups()] if ded_m else [0.0] * 5
+
+    # Shipping Bill Port wraps around its label; stitch the surrounding lines.
+    port = ""
+    pm = re.search(r"(.*)\n\d*\s*Shipping Bill Port\s*\n(.*)", text, re.IGNORECASE)
+    if pm:
+        port = re.sub(r"\s+", " ", (pm.group(1).split("\n")[-1] + " " + pm.group(2).split("\n")[0])).strip()
+
+    real_ts = _parse_date(real_dt)
+    if real_ts is not None and pd.isna(real_ts):
+        real_ts = None
+    fy_str, _ = _fy_from_date(real_ts)
+    period_date = pd.Timestamp(real_ts.year, real_ts.month, 1) if real_ts is not None else None
+
+    return {
+        "ReturnType":        "EBRC",
+        "DocKind":           "Return",
+        "EntityID":          iec or gstin or "Unknown",
+        "EntityName":        firm or "Unknown",
+        "FY":                fy_str,
+        "GSTIN":             gstin,
+        "IEC":               iec,
+        "ShippingBill_No":   sb_no,
+        "ShippingBill_Date": _norm_date(sb_date),
+        "ShippingBill_Port": port,
+        "Bank_Name":         bank,
+        "Bill_ID":           bill_id,
+        "GST_Invoice_No":    gst_inv_no,
+        "GST_Invoice_Date":  _norm_date(gst_inv_date),
+        "BRC_No":            brc_no,
+        "Realisation_Date":  _norm_date(real_dt),
+        "Total_Realised":    total,
+        "Commission":        ded[0],
+        "Discount":          ded[1],
+        "Insurance":         ded[2],
+        "Freight":           ded[3],
+        "Other_Deduction":   ded[4],
+        "Net_Realised":      net,
+        "PrimaryAmount":     net,
+        "Currency":          curr,
+        "Print_Date":        _norm_date(print_dt),
+        "DocRef":            brc_no or bill_id,
+        "FilingDate":        _norm_date(real_dt),
+        "PeriodDate":        period_date,
+        "Month":             period_date.strftime("%B") if period_date is not None else "Unknown",
+    }
+
+
 # ── ESIC ───────────────────────────────────────────────────────────────────────
 
 def parse_esic(pdf, fname: str) -> dict:

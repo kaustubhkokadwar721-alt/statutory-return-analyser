@@ -90,6 +90,7 @@ const TYPE_META = {
   ESIC:   { icon: "i-esic",   cls: "t-esic",   label: "ESIC" },
   PTRC:   { icon: "i-ptrc",   cls: "t-ptrc",   label: "PTRC" },
   SB:     { icon: "i-sb",     cls: "t-sb",     label: "Ship. Bill" },
+  EBRC:   { icon: "i-ebrc",   cls: "t-ebrc",   label: "eBRC" },
 };
 function typeCell(rt) {
   const m = TYPE_META[rt];

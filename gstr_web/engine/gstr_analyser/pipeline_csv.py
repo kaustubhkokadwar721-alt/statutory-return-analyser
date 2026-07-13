@@ -14,7 +14,7 @@ from .gstr3b.parser import parse_complete_gstr3b
 from .gstr3b.checks import run_sanity_checks_gstr3b
 from .compliance_parsers import (
     parse_esic, parse_pf, parse_pf_ecr, parse_pf_arrears, parse_pf_payment,
-    parse_ptrc, parse_ptrc_challan, parse_tds,
+    parse_ptrc, parse_ptrc_challan, parse_tds, parse_ebrc,
 )
 from .ui import write_sheet
 from .shipping_bill import parse_shipping_bill, sb_flat_row, sb_item_rows
@@ -40,6 +40,10 @@ def detect_document(text: str):
     # Customs export documents — ICEGATE shipping bill
     if "INDIAN CUSTOMS EDI SYSTEM" in t or "SHIPPING BILL SUMMARY" in t:
         return "SB", "Return"
+
+    # eBRC — DGFT bank-realisation certificate (export payment proof)
+    if "STATEMENT OF BANK REALISATION" in t or ("DIRECTORATE GENERAL OF FOREIGN TRADE" in t and "REALISATION" in t):
+        return "EBRC", "Return"
 
     # GSTR forms — very specific markers
     if "GSTR-3B" in t or "GSTR3B" in t:
@@ -273,7 +277,7 @@ def run_unified_pipeline(
 
     records = []          # unified contract rows
     errors  = []          # failed files
-    raw_details = {k: [] for k in ("GSTR1", "GSTR3B", "ESIC", "PF", "PTRC", "TDS", "SB")}
+    raw_details = {k: [] for k in ("GSTR1", "GSTR3B", "ESIC", "PF", "PTRC", "TDS", "SB", "EBRC")}
     sb_items = []         # shipping-bill line items (separate ledger)
 
     for idx, fpath in enumerate(pdf_files, 1):
@@ -543,6 +547,20 @@ def run_unified_pipeline(
                     for row in sb_item_rows(doc):
                         row["SourceFile"] = fname
                         sb_items.append(row)
+
+                # ── eBRC (DGFT bank-realisation certificate) ──────────────
+                elif return_type == "EBRC":
+                    res = parse_ebrc(pdf, fname)
+                    res["SourceFile"] = fname
+                    flags_list = []
+                    if res["EntityID"] in ("Unknown", ""):
+                        flags_list.append("ENTITY?")
+                    if res.get("PeriodDate") is None:
+                        flags_list.append("PERIOD?")
+                    if not res.get("PrimaryAmount"):
+                        flags_list.append("AMT?")
+                    records.append(_consolidated_row(res, fname, flags_list))
+                    raw_details["EBRC"].append(res)
 
                 else:
                     scanned = not first_text.strip()
