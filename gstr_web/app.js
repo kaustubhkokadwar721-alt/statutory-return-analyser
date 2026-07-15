@@ -350,20 +350,20 @@ function stampName(filename) {
 
 async function loadPdfRenderer() {
   if (!pdfjsPromise) {
-    pdfjsPromise = import(OCR_PDFJS).then((pdfjs) => {
-      pdfjs.GlobalWorkerOptions.workerSrc = OCR_PDF_WORKER;
-      return pdfjs;
-    });
+    pdfjsPromise = import(OCR_PDFJS)
+      .then((pdfjs) => {
+        pdfjs.GlobalWorkerOptions.workerSrc = OCR_PDF_WORKER;
+        return pdfjs;
+      })
+      .catch((error) => {
+        pdfjsPromise = null;
+        throw error;
+      });
   }
   return pdfjsPromise;
 }
 
-async function ocrScannedFiles(errors) {
-  const names = new Set(errors.filter((error) => error.Type === "NeedsOCR").map((error) => error.File));
-  const files = pickedFiles.filter((file) => names.has(file.name));
-  if (!files.length) return;
-  if (!window.Tesseract) throw new Error("The local OCR runtime could not be loaded.");
-
+async function runLocalOcr(files) {
   const pdfjs = await loadPdfRenderer();
   const worker = await window.Tesseract.createWorker("eng", 1, {
     workerPath: "./ocr/worker.min.js",
@@ -408,6 +408,29 @@ async function ocrScannedFiles(errors) {
   } finally {
     await worker.terminate();
   }
+}
+
+async function ocrScannedFiles(errors) {
+  const names = new Set(errors.filter((error) => error.Type === "NeedsOCR").map((error) => error.File));
+  const files = pickedFiles.filter((file) => names.has(file.name));
+  if (!files.length) return;
+  if (!window.Tesseract) throw new Error("The local OCR component did not load. Refresh the page and try again.");
+
+  let lastError;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      await runLocalOcr(files);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt === 1) {
+        pdfjsPromise = null;
+        log("  [OCR] Local OCR did not start. Retrying once...");
+      }
+    }
+  }
+  const reason = lastError instanceof Error ? lastError.message : String(lastError);
+  throw new Error(`Local OCR could not complete after a retry: ${reason}`);
 }
 
 async function runEngine() {
@@ -491,8 +514,9 @@ for d in ("/work/in", "/work/out"):
     selectTab(1);
     document.getElementById("paneResults").scrollTop = 0;
   } catch (e) {
-    setStatus("Processing failed.", "err");
-    log("ERROR:\n" + e.message);
+    const reason = e instanceof Error ? e.message : String(e);
+    setStatus("Processing stopped. See details below.", "err");
+    log("ERROR:\n" + reason);
     console.error(e);
   } finally {
     runBtn.disabled = false;

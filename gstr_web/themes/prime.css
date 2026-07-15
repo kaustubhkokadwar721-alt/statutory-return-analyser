@@ -126,27 +126,25 @@ body {
 .dot.err { background: var(--red); }
 @keyframes pulse { 0%,100%{ opacity:1 } 50%{ opacity:.35 } }
 
-/* privacy pledge: a clear ledger seal, pushed to the far right */
+/* Privacy stays visible without competing with the product name. */
 .pledge-mini {
-  display: flex; align-items: center; gap: 10px; margin-left: auto;
-  min-width: 300px; padding: 7px 13px 7px 9px; flex: 0 0 300px; cursor: help;
-  background: color-mix(in oklch, var(--green) 8%, var(--panel));
-  border: 1px solid color-mix(in oklch, var(--green) 34%, var(--panel));
-  border-left: 4px solid var(--green); border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-sm);
+  display: flex; align-items: center; gap: 8px; margin-left: auto;
+  min-width: 250px; padding: 4px 0 4px 11px; flex: 0 1 270px; cursor: help;
+  border-left: 2px solid var(--green);
 }
 .stamp {
-  flex: none; width: 34px; height: 34px; border-radius: var(--radius-sm);
-  background: var(--green); color: var(--panel); display: grid; place-items: center;
-  box-shadow: 0 1px 2px color-mix(in oklch, var(--green-2) 24%, transparent);
+  flex: none; width: 24px; height: 24px; border-radius: 50%;
+  background: color-mix(in oklch, var(--green) 12%, var(--panel));
+  border: 1px solid color-mix(in oklch, var(--green) 58%, var(--panel));
+  color: var(--green-2); display: grid; place-items: center;
 }
-.stamp svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.stamp svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .pledge-txt {
   display: flex; flex-direction: column; gap: 1px; min-width: 0;
   font-size: 11px; line-height: 1.2; color: var(--ink-soft);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.pledge-txt b { color: var(--green-2); font-size: 19px; font-weight: 700; letter-spacing: 0; line-height: 1.1; }
+.pledge-txt b { color: var(--green-2); font-size: 12px; font-weight: 700; letter-spacing: .04em; line-height: 1.2; text-transform: uppercase; }
 .pledge-txt span { overflow: hidden; text-overflow: ellipsis; }
 
 /* ---- Main workspace: fills all remaining height below the topbar ---- */
