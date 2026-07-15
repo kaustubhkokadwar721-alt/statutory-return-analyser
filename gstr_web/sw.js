@@ -7,8 +7,9 @@
 // asset list here would drift from the ~45 bundled files; caching happens
 // lazily as the app requests each file.
 
-const CACHE = "sre-v1";
-const IMMUTABLE = ["/pyodide/", "/wheels/", "/fonts/"];
+// Bump this whenever the vendored Pyodide runtime, wheels, or fonts change.
+const CACHE = "sre-pyodide-0.26.4-ocr-20260714";
+const IMMUTABLE = ["/pyodide/", "/wheels/", "/fonts/", "/ocr/"];
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();
@@ -32,8 +33,7 @@ self.addEventListener("fetch", (event) => {
   const isImmutable = IMMUTABLE.some((seg) => url.pathname.includes(seg));
 
   if (isImmutable) {
-    // Cache-first: these files are content-versioned by filename/hash and
-    // never change under the same name, so a cache hit is always correct.
+    // Cache-first: CACHE is bumped with every vendored runtime update.
     event.respondWith(
       caches.match(req).then((cached) => {
         if (cached) return cached;

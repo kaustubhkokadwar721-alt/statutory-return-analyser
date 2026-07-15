@@ -1,1 +1,0 @@
-Implement the template addition feature like screener - there will be full data dump in a data sheet for 3B or R1 and a default analysis but freedom to use to change that template and get customized output  - removes rigidity and improves UX

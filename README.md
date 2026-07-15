@@ -124,18 +124,35 @@ gstr_web/            # the browser app (deployed to Pages)
   themes/prime.css   #   the theme
   fonts/             #   vendored woff2 (Spectral + Hanken Grotesk)
   pyodide/  wheels/  #   vendored runtime + Python wheels
-  engine/            #   parser package, zipped to engine.zip
+  engine/            #   maintained parser package, zipped to engine.zip
     gstr_analyser/pipeline_csv.py       # unified auto-detect pipeline
     gstr_analyser/compliance_parsers.py # ESIC / PF / PTRC / TDS parsers
-gstr_analyser_src/   # original desktop package (CLI / TUI, GSTR-1/3B)
+docs/                # small product and future-work notes
+desktop_launcher/    # local-only Windows launcher and portable-package builder
+legacy/              # historical desktop, Power Query, and workbook material
+  desktop-analyser/  #   old desktop application (not maintained)
+  powerquery/        #   old Power Query scripts (not deployed)
 ```
 
 ## Rebuilding the offline bundle
 
 ```bash
 cd gstr_web
-python build_offline.py    # vendor Pyodide runtime + Python wheels
+python package_engine.py   # rebuild engine.zip from engine/
+python build_offline.py    # refresh vendored Pyodide runtime + Python wheels
 ```
+
+## Portable Windows package
+
+The browser app is the only parser engine. For clients who need a reliable offline
+copy without a first-time browser download, build the local launcher package:
+
+```bash
+python desktop_launcher/build_portable.py
+```
+
+It creates a portable folder and ZIP under `release/`. The launcher serves the same
+browser app only on `127.0.0.1`; it does not upload documents or contain a second parser.
 
 ## License
 

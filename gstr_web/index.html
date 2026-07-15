@@ -121,7 +121,10 @@
       <span class="stamp" aria-hidden="true">
         <svg viewBox="0 0 24 24"><use href="#i-logo"/></svg>
       </span>
-      <span class="pledge-txt"><b>Files never leave this device</b> · parsed in-browser, nothing uploaded</span>
+      <span class="pledge-txt">
+        <b>Private by design</b>
+        <span>Files stay on this device</span>
+      </span>
     </div>
   </div>
 </header>
@@ -167,8 +170,11 @@
       <div class="run-row">
         <button class="btn" id="run" disabled>
           <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-play"/></svg>
-          Parse to CSV
+          Run and Report
         </button>
+        <label class="ocr-toggle" title="Runs the bundled OCR engine in this browser only. Scanned GSTR and Shipping Bill layouts remain review-only until structured OCR is added.">
+          <input type="checkbox" id="ocrEnabled" checked> OCR scanned PDFs
+        </label>
         <span class="run-hint">Auto-detects each document’s type</span>
       </div>
       <div id="log" class="log"></div>
@@ -195,9 +201,17 @@
           <div id="reconTable" class="tbl-wrap"></div>
         </div>
 
+        <div class="rsec" id="reviewSec" hidden>
+          <div class="rsec-head">Review Evidence</div>
+          <div id="reviewDetails" class="tbl-wrap"></div>
+        </div>
+
         <div class="rsec">
           <div class="rsec-head">Records
             <span class="count" id="recCount" aria-live="polite"></span>
+            <label class="record-filter"><select id="filterType" aria-label="Filter by return type"><option value="">All types</option></select></label>
+            <label class="record-filter"><select id="filterFY" aria-label="Filter by financial year"><option value="">All years</option></select></label>
+            <label class="record-filter"><select id="filterStatus" aria-label="Filter by status"><option value="">All states</option></select></label>
             <label class="flagtoggle"><input type="checkbox" id="flaggedOnly"> Flagged only</label>
           </div>
           <div id="badFiles"></div>
@@ -236,6 +250,7 @@
 })();
 </script>
 <script src="./pyodide/pyodide.js"></script>
+<script src="./ocr/tesseract.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

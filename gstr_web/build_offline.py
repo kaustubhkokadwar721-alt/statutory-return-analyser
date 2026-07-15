@@ -43,8 +43,8 @@ print(f"    {len(seen)} pyodide packages vendored")
 # 3. Pure-Python wheels from PyPI (micropip-installed at runtime)
 print("[3] PyPI pure wheels")
 reqs = [
-    "pdfplumber==0.11.9", "pdfminer.six", "XlsxWriter", "rich",
-    "charset-normalizer", "pygments", "markdown-it-py", "mdurl",
+    "pdfplumber==0.11.9", "pdfminer.six==20260107", "XlsxWriter==3.2.9",
+    "charset-normalizer==3.4.7",
 ]
 rc = subprocess.run(
     [sys.executable, "-m", "pip", "download",

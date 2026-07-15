@@ -1,4 +1,4 @@
-"""Terminal UI and Excel formatting helpers."""
+"""Excel formatting helpers for the browser engine."""
 
 from __future__ import annotations
 
@@ -6,108 +6,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import pandas as pd
-
-from rich import box
-from rich.align import Align
-from rich.columns import Columns
-from rich.console import Group
-from rich.panel import Panel
-from rich.table import Table
-from rich.text import Text
-
-
-class PipelineUI:
-    STEPS = [
-        "Validate PDFs",
-        "Extract Tables",
-        "Run Checks",
-        "Shape Analytics",
-        "Write Workbooks",
-    ]
-
-    def __init__(self, title: str = "GSTR Return Analyser"):
-        self.title = title
-        self.current_step = 0
-        self.detail = ""
-
-    def advance(self, detail: str = "") -> None:
-        self.current_step += 1
-        self.detail = detail
-
-    def _status_cards(self) -> Columns:
-        cards = []
-        for idx, step in enumerate(self.STEPS):
-            if idx < self.current_step:
-                border = "green"
-                state = Text("COMPLETE", style="bold green")
-                marker = "[+]"
-            elif idx == self.current_step:
-                border = "#ffb703"
-                state = Text("ACTIVE", style="bold #ffb703")
-                marker = "[>]"
-            else:
-                border = "grey35"
-                state = Text("WAITING", style="dim")
-                marker = "[ ]"
-
-            body = Table.grid(expand=True)
-            body.add_column(justify="left")
-            body.add_row(f"[bold]{marker} {idx + 1:02d}[/]")
-            body.add_row(f"[white]{step}[/]")
-            body.add_row(state)
-            cards.append(Panel(body, border_style=border, box=box.ROUNDED, padding=(0, 1)))
-        return Columns(cards, equal=True, expand=True)
-
-    def _progress_bar(self) -> Text:
-        total = len(self.STEPS)
-        done = min(self.current_step, total)
-        width = 28
-        filled = int(width * done / total)
-        bar = Text()
-        bar.append("[", style="dim")
-        bar.append("#" * filled, style="bold #3a86ff")
-        bar.append("-" * (width - filled), style="grey35")
-        bar.append("]", style="dim")
-        bar.append(f" {done}/{total}", style="bold white")
-        return bar
-
-    def render(self) -> Panel:
-        header = Table.grid(expand=True)
-        header.add_column(justify="left", ratio=2)
-        header.add_column(justify="right", ratio=1)
-        header.add_row(
-            f"[bold white]{self.title.upper()}[/]",
-            "[#8ecae6]LIVE RUN[/]",
-        )
-        header.add_row(
-            "[dim]Extraction control deck[/]",
-            "[dim]Pipeline[/]",
-        )
-
-        progress_panel = Panel(
-            Align.left(self._progress_bar()),
-            title="Progress",
-            border_style="grey35",
-            box=box.ROUNDED,
-            padding=(0, 1),
-        )
-
-        detail_panel = Panel(
-            Align.left(Text(self.detail or "Working...", style="bold white")),
-            title="Current Signal",
-            border_style="#3a86ff",
-            box=box.ROUNDED,
-            padding=(0, 1),
-        )
-
-        return Panel(
-            Group(header, progress_panel, self._status_cards(), detail_panel),
-            border_style="#5bc0be",
-            box=box.DOUBLE_EDGE,
-            expand=True,
-            padding=(1, 2),
-        )
-
 
 def apply_header_format(writer, sheet_name: str, df: pd.DataFrame) -> None:
     """Overwrite row 0 with a bold dark-blue header on an xlsxwriter sheet."""

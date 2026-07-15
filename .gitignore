@@ -6,9 +6,11 @@ __pycache__/
 .parse_cache.pkl
 
 # ── Desktop build artifacts (huge: PyInstaller exe + build tree) ──
-gstr_analyser_src/dist/
-gstr_analyser_src/build/
+legacy/desktop-analyser/dist/
+legacy/desktop-analyser/build/
 *.exe
+release/
+desktop_launcher/build/
 
 # ── Dev tooling / scratch (not part of the shipped app) ──
 pyodide_spike/
@@ -22,6 +24,8 @@ graphify-out/
 Samples/
 *_combined_input/
 *_output/
+tests/private_fixtures/
+tests/private_expected/
 
 # ── OS / editor cruft ──
 Thumbs.db

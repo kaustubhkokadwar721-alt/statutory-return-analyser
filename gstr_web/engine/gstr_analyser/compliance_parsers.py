@@ -143,14 +143,48 @@ def parse_tds(pdf, fname: str) -> dict:
     penalty   = breakup("Penalty")
     fee       = breakup("Fee under section 234E")
 
-    tan_val        = kv(r"TAN")               or "Unknown"
+    # New tax-payment receipt layout uses (a)/(b)/(c), rather than A-F.
+    def schedule_breakup(label: str) -> float:
+        m = re.search(
+            rf"^\([a-c]\)\s+{re.escape(label)}\s+[\u20b9?]\s*([\d,]+(?:\.\d+)?)",
+            full_text, re.IGNORECASE | re.MULTILINE,
+        )
+        return to_float(m.group(1)) if m else 0.0
+
+    if re.search(r"^\(a\)\s+Amount deducted\b", full_text, re.IGNORECASE | re.MULTILINE):
+        tax = schedule_breakup("Amount deducted")
+        interest = schedule_breakup("Interest")
+        fee = schedule_breakup("Fee")
+
+    tan_val        = kv(r"TAN")               or ""
+    pan_val        = kv(r"PAN")               or ""
+    entity_id      = tan_val or pan_val or "Unknown"
+    taxpayer_id_type = "TAN" if tan_val else ("PAN" if pan_val else "")
     company_name   = kv(r"Name")              or "Unknown"
-    fy_val         = kv(r"Financial Year")    or ""
+    tax_year       = kv(r"Tax Year")          or ""
+    fy_val         = kv(r"Financial Year")    or tax_year
     major_head_raw = kv(r"Major Head")        or ""
+    minor_head_raw = kv(r"Minor Head")        or ""
     nop_raw        = kv(r"Nature of Payment") or "Unknown"
     challan_no     = kv(r"Challan No")        or ""
     p_date_str     = kv(r"Date of Deposit")   or ""
+    itns_no        = kv(r"ITNS\s+No\.?")     or ""
+    amount_words   = kv(r"Amount\s*\(in words\)") or ""
+    payment_mode   = kv(r"Mode of Payment")   or ""
+    bank_name      = kv(r"Bank Name")         or ""
+    bank_reference = kv(r"Bank Reference Number") or ""
+    bsr_code       = kv(r"BSR\s*code")       or ""
+    tender_date    = _norm_date(kv(r"Tender Date"))
     section_val    = nop_raw.split()[0] if nop_raw and nop_raw != "Unknown" else "Unknown"
+    acknowledgement_no = kv(r"Acknowledgement Number") or ""
+
+    schedule_match = re.match(r"(Schedule\s+[A-Z])\s*:-\s*(.+)", minor_head_raw, re.IGNORECASE)
+    payment_schedule = schedule_match.group(1) if schedule_match else ""
+    payment_description = schedule_match.group(2).strip() if schedule_match else ""
+
+    def head_code(value: str) -> str:
+        match = re.search(r"\((\d+)\)", value)
+        return match.group(1) if match else ""
 
     mh_upper = major_head_raw.upper()
     if "OTHER THAN COMPAN" in mh_upper or "0021" in mh_upper:
@@ -219,13 +253,23 @@ def parse_tds(pdf, fname: str) -> dict:
 
     return {
         "ReturnType":             "TDS",
-        "EntityID":               tan_val,
+        "EntityID":               entity_id,
         "EntityName":             company_name,
         "FY":                     fy_val,
+        "Tax Year":               tax_year,
+        "TAN":                    tan_val,
+        "PAN":                    pan_val,
+        "Taxpayer ID Type":       taxpayer_id_type,
         "Month":                  tds_month,
         "Section":                section_val,
         "Major Head":             major_head_val,
+        "Major Head Code":        head_code(major_head_raw),
+        "Minor Head":             minor_head_raw,
+        "Minor Head Code":        head_code(minor_head_raw),
+        "Payment Schedule":       payment_schedule,
+        "Payment Description":    payment_description,
         "Total Amount Paid":      total_amount_paid,
+        "Amount in Words":        amount_words,
         "Tax":                    tax,
         "Surcharge":              surcharge,
         "Cess":                   cess,
@@ -235,7 +279,14 @@ def parse_tds(pdf, fname: str) -> dict:
         "Crosscheck Diff":        crosscheck_diff,
         "Challan No":             challan_no,
         "Payment Date":           payment_date_str,
+        "Tender Date":            tender_date,
         "CIN":                    cin_val,
+        "ITNS No":                itns_no,
+        "Acknowledgement Number": acknowledgement_no,
+        "Payment Mode":           payment_mode,
+        "Bank Name":              bank_name,
+        "Bank Reference Number":  bank_reference,
+        "BSR Code":               bsr_code,
         "Assessment Year":        ay_val,
         "DocRef":                 challan_no or cin_val,
         "FilingDate":             payment_date_str,

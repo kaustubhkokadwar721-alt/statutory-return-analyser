@@ -3,26 +3,25 @@
 // ---- config ----
 const PYODIDE_INDEX = "./pyodide/";
 const ENGINE_ZIP    = "engine.zip";
+const OCR_PDFJS     = "./ocr/pdf.min.mjs";
+const OCR_PDF_WORKER = "./ocr/pdf.worker.min.mjs";
 const LOCAL_WHEELS  = [
   "./wheels/charset_normalizer-3.4.7-py3-none-any.whl",
   "./wheels/pdfminer_six-20260107-py3-none-any.whl",
   "./wheels/pdfplumber-0.11.9-py3-none-any.whl",
   "./wheels/xlsxwriter-3.2.9-py3-none-any.whl",
-  "./wheels/mdurl-0.1.2-py3-none-any.whl",
-  "./wheels/markdown_it_py-4.2.0-py3-none-any.whl",
-  "./wheels/pygments-2.20.0-py3-none-any.whl",
-  "./wheels/rich-15.0.0-py3-none-any.whl",
 ];
 
 // ---- state ----
 let pyodide    = null;
 let ready      = false;
-let pickedFiles = [];   // [{name, bytes}]
-let outputs    = {};
+let pickedFiles = [];   // [{name, displayName, bytes}] name is unique in the sandbox
 let consolidated   = [];  // unified ledger rows (one per document)
 let dashboard      = [];  // head × DocKind × FY summary rows
 let reconciliation = [];  // per-period declared-vs-paid tie-out rows
 let parseErrors    = [];  // files that could not be parsed at all
+let reviews        = [];  // local audit evidence for records needing attention
+let pdfjsPromise    = null;
 
 // ---- dom ----
 const $ = (s) => document.querySelector(s);
@@ -35,6 +34,7 @@ const dropEl     = $("#drop");
 const picker     = $("#picker");
 const resultsEl  = $("#results");
 const resultsTab = $("#tabResults");
+const ocrEnabled = $("#ocrEnabled");
 
 function setStatus(text, cls) {
   statusText.textContent = text;
@@ -109,13 +109,27 @@ function kindCell(k) {
 // ---- file selection ----
 let fileTags = {};  // name -> {type, status} once parsed
 
+function uniqueSandboxName(filename) {
+  const used = new Set(pickedFiles.map((file) => file.name.toLowerCase()));
+  if (!used.has(filename.toLowerCase())) return filename;
+  const match = /^(.*?)(\.pdf)$/i.exec(filename) || ["", filename, ""];
+  for (let copy = 2; ; copy += 1) {
+    const candidate = `${match[1]}__${copy}${match[2]}`;
+    if (!used.has(candidate.toLowerCase())) return candidate;
+  }
+}
+
+function displayFileName(file) {
+  return file.name === file.displayName ? file.name : `${file.displayName} (copy)`;
+}
+
 async function addFiles(fileList) {
   for (const f of fileList) {
     if (!f.name.toLowerCase().endsWith(".pdf")) continue;
     const bytes = new Uint8Array(await f.arrayBuffer());
-    pickedFiles = pickedFiles.filter((p) => p.name !== f.name);
-    pickedFiles.push({ name: f.name, bytes });
-    delete fileTags[f.name];
+    const name = uniqueSandboxName(f.name);
+    pickedFiles.push({ name, displayName: f.name, bytes });
+    delete fileTags[name];
   }
   renderFiles();
   maybeEnableRun();
@@ -186,9 +200,9 @@ function renderFiles() {
       }
     }
     div.innerHTML =
-      `<span class="nm" title="${esc(f.name)}">${esc(f.name)}</span>${tagHtml}` +
+      `<span class="nm" title="${esc(displayFileName(f))}">${esc(displayFileName(f))}</span>${tagHtml}` +
       `<span class="sz">${fmtSize(f.bytes.length)}</span>` +
-      `<button type="button" class="rm" aria-label="Remove ${esc(f.name)}">&times;</button>`;
+      `<button type="button" class="rm" aria-label="Remove ${esc(displayFileName(f))}">&times;</button>`;
     div.querySelector(".rm").addEventListener("click", () => removeFile(f.name));
     filesEl.appendChild(div);
   }
@@ -309,7 +323,12 @@ await micropip.install(list(wheel_list), deps=False)
     maybeEnableRun();
   } catch (e) {
     diagFail(step, e.message);
-    setStatus("Engine failed to load: " + e.message, "err");
+    setStatus(
+      location.protocol === "file:"
+        ? "Open with the Windows launcher or local server."
+        : "Engine failed to load. See details below.",
+      "err"
+    );
     log("BOOT ERROR:\n" + e.message +
       "\n\nCommon causes: opening the page from file://, a web server that blocks .whl/.wasm/.zip files, " +
       "an ad-blocker or strict content-security policy, or a very old browser.");
@@ -329,11 +348,81 @@ function stampName(filename) {
   return i === -1 ? `${filename}_${runStamp}` : `${filename.slice(0, i)}_${runStamp}${filename.slice(i)}`;
 }
 
+async function loadPdfRenderer() {
+  if (!pdfjsPromise) {
+    pdfjsPromise = import(OCR_PDFJS).then((pdfjs) => {
+      pdfjs.GlobalWorkerOptions.workerSrc = OCR_PDF_WORKER;
+      return pdfjs;
+    });
+  }
+  return pdfjsPromise;
+}
+
+async function ocrScannedFiles(errors) {
+  const names = new Set(errors.filter((error) => error.Type === "NeedsOCR").map((error) => error.File));
+  const files = pickedFiles.filter((file) => names.has(file.name));
+  if (!files.length) return;
+  if (!window.Tesseract) throw new Error("The local OCR runtime could not be loaded.");
+
+  const pdfjs = await loadPdfRenderer();
+  const worker = await window.Tesseract.createWorker("eng", 1, {
+    workerPath: "./ocr/worker.min.js",
+    corePath: "./ocr/core",
+    langPath: "./ocr/lang",
+    gzip: false,
+    cacheMethod: "none",
+    workerBlobURL: false,
+  });
+  try {
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index];
+      log(`  [OCR] ${index + 1}/${files.length}: ${displayFileName(file)}`);
+      const task = pdfjs.getDocument({ data: file.bytes.slice() });
+      const pdfDocument = await task.promise;
+      const pageText = [];
+      try {
+        for (let pageNo = 1; pageNo <= pdfDocument.numPages; pageNo += 1) {
+          const page = await pdfDocument.getPage(pageNo);
+          const viewport = page.getViewport({ scale: 2 });
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.ceil(viewport.width);
+          canvas.height = Math.ceil(viewport.height);
+          const context = canvas.getContext("2d", { alpha: false });
+          await page.render({ canvasContext: context, viewport, background: "#ffffff" }).promise;
+          const result = await worker.recognize(canvas);
+          pageText.push((result.data.text || "").trim());
+          canvas.width = 1;
+          canvas.height = 1;
+          page.cleanup();
+        }
+      } finally {
+        await pdfDocument.destroy();
+      }
+      const text = pageText.join("\f").trim();
+      if (text.length < 20) {
+        log(`  [OCR] No usable text found: ${displayFileName(file)}`);
+        continue;
+      }
+      pyodide.FS.writeFile(`/work/in/${file.name}.ocr.txt`, new TextEncoder().encode(text));
+    }
+  } finally {
+    await worker.terminate();
+  }
+}
+
+async function runEngine() {
+  const resultJson = await pyodide.runPythonAsync(`
+import web_bootstrap, json
+result = web_bootstrap.run("auto", "/work/in", "/work/out", progress_cb=progress_cb)
+json.dumps(result)
+  `);
+  return JSON.parse(resultJson);
+}
+
 runBtn.addEventListener("click", async () => {
   if (!ready || pickedFiles.length === 0) return;
   runBtn.disabled = true;
-  outputs = {};
-  consolidated = []; dashboard = []; parseErrors = [];
+  consolidated = []; dashboard = []; reconciliation = []; parseErrors = []; reviews = [];
   resultsEl.classList.remove("show");
   // release blob URLs from the previous run before discarding the buttons
   resultsEl.querySelectorAll("a[href^='blob:']").forEach((a) => URL.revokeObjectURL(a.href));
@@ -355,18 +444,25 @@ for d in ("/work/in", "/work/out"):
     const progress = (step, detail) => log(`  [${step}] ${detail || ""}`);
     pyodide.globals.set("progress_cb", progress);
 
-    const resultJson = await pyodide.runPythonAsync(`
-import web_bootstrap, json
-result = web_bootstrap.run("auto", "/work/in", "/work/out", progress_cb=progress_cb)
-json.dumps(result)
-    `);
-    const result = JSON.parse(resultJson);
+    let result = await runEngine();
+    const initialErrors = (result.errors || []).map((error) => ({
+      File: error.File, Type: error.Error_Type, Message: error.Message, Action: error.Action,
+    }));
+    if (ocrEnabled.checked && initialErrors.some((error) => error.Type === "NeedsOCR")) {
+      setStatus("Reading scanned PDFs locally...", "busy");
+      await ocrScannedFiles(initialErrors);
+      log("  [OCR] Re-running the parser with local OCR text.");
+      result = await runEngine();
+    }
     runStamp = newRunStamp();
 
     consolidated   = result.consolidated   || [];
     dashboard      = result.dashboard      || [];
     reconciliation = result.reconciliation || [];
-    parseErrors    = (result.errors || []).map((e) => ({ File: e.File, Message: e.Message }));
+    parseErrors    = (result.errors || []).map((e) => ({
+      File: e.File, Type: e.Error_Type, Message: e.Message, Action: e.Action,
+    }));
+    reviews        = result.reviews || [];
 
     // one Excel workbook — the sole deliverable
     if (result.workbook) {
@@ -384,6 +480,7 @@ json.dumps(result)
 
     renderDashboard();
     renderReconciliation();
+    renderReviews();
 
     resultsEl.classList.add("show");
     setStatus(`Done — ${pickedFiles.length} PDF(s) processed, ${consolidated.length} record(s), workbook ready.`, "ok");
@@ -448,6 +545,7 @@ function renderDashboard() {
     el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
   });
   document.getElementById("dashTable").innerHTML = dashTableHTML();
+  renderRecordFilters();
   renderRecords();
 }
 
@@ -469,11 +567,32 @@ function dashTableHTML() {
 
 const STATUS_RANK = { Error: 0, Review: 1, OK: 2 };
 
+function setRecordFilterOptions(id, emptyLabel, values) {
+  const select = document.getElementById(id);
+  const current = select.value;
+  select.innerHTML = `<option value="">${emptyLabel}</option>` +
+    values.map((value) => `<option value="${esc(value)}">${esc(value)}</option>`).join("");
+  select.value = values.includes(current) ? current : "";
+}
+
+function renderRecordFilters() {
+  setRecordFilterOptions("filterType", "All types", [...new Set(consolidated.map((row) => row.ReturnType).filter(Boolean))].sort());
+  setRecordFilterOptions("filterFY", "All years", [...new Set(consolidated.map((row) => row.FY).filter(Boolean))].sort().reverse());
+  const statuses = ["Error", "Review", "OK"].filter((status) => consolidated.some((row) => row.Status === status));
+  setRecordFilterOptions("filterStatus", "All states", statuses);
+}
+
 function renderRecords() {
   const flaggedOnly = document.getElementById("flaggedOnly").checked;
+  const typeFilter = document.getElementById("filterType").value;
+  const fyFilter = document.getElementById("filterFY").value;
+  const statusFilter = document.getElementById("filterStatus").value;
   let rows = consolidated.slice();
   const flagged = rows.filter((r) => r.Status !== "OK").length;
   if (flaggedOnly) rows = rows.filter((r) => r.Status !== "OK");
+  if (typeFilter) rows = rows.filter((r) => r.ReturnType === typeFilter);
+  if (fyFilter) rows = rows.filter((r) => r.FY === fyFilter);
+  if (statusFilter) rows = rows.filter((r) => r.Status === statusFilter);
 
   // exceptions first: the reviewer should never hunt for the row that needs attention
   rows.sort((a, b) =>
@@ -489,6 +608,8 @@ function renderRecords() {
       (flagged ? ` · ${flagged} flagged` : " · all clean");
 
   const head = ["", "Head", "Document", "Entity", "FY", "Period", "Ref", "Amount ₹", "Flags", "Source"];
+  head.splice(8, 0, "Audit");
+  head.splice(10, 0, "Evidence");
   const body = rows.map((r) => {
     const st = (r.Status || "").toLowerCase();
     return `<tr>
@@ -500,11 +621,23 @@ function renderRecords() {
       <td>${esc(period(r))}</td>
       <td class="ell ref" title="${esc(r.DocRef)}">${esc(r.DocRef || "—")}</td>
       <td class="num">${money(r.PrimaryAmount)}</td>
+      <td class="num audit-score">${r.Confidence == null ? "-" : `${esc(r.Confidence)}/100`}</td>
       <td class="flags">${esc(r.Flags)}</td>
+      <td>${r.Status === "OK" ? "-" : `<button type="button" class="evidence-btn" data-review-source="${esc(r.SourceFile)}">Open</button>`}</td>
       <td class="ell src" title="${esc(r.SourceFile)}">${esc(r.SourceFile)}</td></tr>`;
   }).join("");
   document.getElementById("recTable").innerHTML =
     `<table class="tbl rec"><thead><tr>${head.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table>`;
+
+  document.querySelectorAll(".evidence-btn").forEach((button) => {
+    button.addEventListener("click", () => {
+      const detail = [...document.querySelectorAll(".review-detail")]
+        .find((item) => item.dataset.reviewSource === button.dataset.reviewSource);
+      if (!detail) return;
+      detail.open = true;
+      detail.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  });
 
   renderBadFiles();
 }
@@ -512,13 +645,39 @@ function renderRecords() {
 function renderBadFiles() {
   const el = document.getElementById("badFiles");
   if (!parseErrors.length) { el.innerHTML = ""; return; }
+  const labels = {
+    NeedsOCR: "Needs OCR", NeedsStructuredOCR: "Needs structured OCR",
+    MixedDocument: "Mixed document", AmbiguousType: "Needs review", UnknownType: "Unknown type",
+  };
+  const reviewTypes = new Set(Object.keys(labels));
   el.innerHTML =
     `<div class="bad-head">Not parsed (${parseErrors.length})</div>` +
     parseErrors.map((e) => `<div class="bad">
-        <span class="pill error">Unreadable</span>
+        <span class="pill ${reviewTypes.has(e.Type) ? "review" : "error"}">${esc(labels[e.Type] || "Unreadable")}</span>
         <span class="bad-nm" title="${esc(e.File)}">${esc(e.File)}</span>
-        <span class="bad-why">${esc(e.Message)}</span>
+        <span class="bad-why">${esc(e.Message)}${e.Action ? ` ${esc(e.Action)}` : ""}</span>
       </div>`).join("");
+}
+
+function renderReviews() {
+  const sec = document.getElementById("reviewSec");
+  const el = document.getElementById("reviewDetails");
+  if (!sec || !el) return;
+  if (!reviews.length) { sec.hidden = true; el.innerHTML = ""; return; }
+  sec.hidden = false;
+  el.innerHTML = reviews.map((review) => {
+    const findings = (review.Findings || []).map((finding) =>
+      `<li><b>${esc(finding.Code)}</b> - ${esc(finding.Message)}</li>`).join("") || "<li>No additional details.</li>";
+    const evidence = (review.Evidence || []).map((item) =>
+      `<tr><td>${esc(item.Field)}</td><td>${esc(item.Value)}</td><td>${esc(item.Method)}</td><td>${esc(item.Page || "-")}</td></tr>`).join("") ||
+      "<tr><td colspan=\"4\">No field evidence recorded.</td></tr>";
+    return `<details class="review-detail" data-review-source="${esc(review.SourceFile)}">
+      <summary><span class="pill review">${esc(review.Status || "Review")}</span> ${esc(review.SourceFile)} - ${esc(review.ConfidenceGrade || "Low")} audit score (${esc(review.Confidence ?? "-")}/100)</summary>
+      <div class="review-meta">${esc(review.ReturnType)} / ${esc(review.DocKind)} / profile ${esc(review.ProfileVersion)}</div>
+      <ul>${findings}</ul>
+      <table class="tbl"><thead><tr><th>Field</th><th>Extracted value</th><th>Method</th><th>Page</th></tr></thead><tbody>${evidence}</tbody></table>
+    </details>`;
+  }).join("");
 }
 
 // ---- reconciliation: per-period declared-vs-paid tie-out ----
@@ -557,6 +716,9 @@ function renderReconciliation() {
 }
 
 document.getElementById("flaggedOnly").addEventListener("change", renderRecords);
+["filterType", "filterFY", "filterStatus"].forEach((id) => {
+  document.getElementById(id).addEventListener("change", renderRecords);
+});
 
 function addWorkbookResult(bytes, name, recordCount) {
   const filename = stampName(name);

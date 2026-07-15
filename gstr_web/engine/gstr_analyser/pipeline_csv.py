@@ -13,89 +13,16 @@ from .gstr1.checks import run_sanity_checks_gstr1
 from .gstr3b.parser import parse_complete_gstr3b
 from .gstr3b.checks import run_sanity_checks_gstr3b
 from .compliance_parsers import (
-    parse_esic, parse_pf, parse_pf_ecr, parse_pf_arrears, parse_pf_payment,
-    parse_ptrc, parse_ptrc_challan, parse_tds, parse_ebrc, parse_ewb,
+    parse_esic,
 )
 from .ui import write_sheet
 from .shipping_bill import parse_shipping_bill, sb_flat_row, sb_item_rows
+from .audit import audit_record, classify_document, preflight_pdf
+from .handler_registry import REGISTERED_HANDLERS, run_registered
+from .ocr import OCRTextPdf, read_ocr_sidecar
 
 
 # ── Return-type detection ─────────────────────────────────────────────────────
-
-def detect_document(text: str):
-    """Classify a PDF as (head, kind).
-
-    head ∈ {SB, GSTR1, GSTR3B, PF, ESIC, PTRC, TDS, Unknown}
-    kind ∈ {Return, Challan, Payment, Arrears, Unknown}
-
-    A statutory head carries several document kinds that serve different
-    purposes: the Return (the filing), the Challan (the payment demand), the
-    Payment receipt (proof of payment), and Arrears (supplementary). Detection
-    must survive layout quirks — notably EPFO prints "EMPLOYEE'S PROVIDENT FUND"
-    (singular) on returns/receipts but "EMPLOYEES' PROVIDENT FUND" (plural) on
-    challans, so we match the apostrophe-agnostic "PROVIDENT FUND ORGANISATION".
-    """
-    t = text.upper()
-
-    # Customs export documents — ICEGATE shipping bill
-    if "INDIAN CUSTOMS EDI SYSTEM" in t or "SHIPPING BILL SUMMARY" in t:
-        return "SB", "Return"
-
-    # eBRC — DGFT bank-realisation certificate (export payment proof)
-    if "STATEMENT OF BANK REALISATION" in t or ("DIRECTORATE GENERAL OF FOREIGN TRADE" in t and "REALISATION" in t):
-        return "EBRC", "Return"
-
-    # e-Way Bill — NIC GST movement-of-goods
-    if "E-WAY BILL SYSTEM" in t or "E-WAY BILL NO" in t:
-        return "EWB", "Return"
-
-    # GSTR forms — very specific markers
-    if "GSTR-3B" in t or "GSTR3B" in t:
-        return "GSTR3B", "Return"
-    if "GSTR-1" in t or "GSTR1" in t:
-        return "GSTR1", "Return"
-
-    # PF / EPFO — apostrophe-agnostic; resolve the kind from the doc's own header
-    is_pf = (
-        "PROVIDENT FUND ORGANISATION" in t
-        or "COMBINED CHALLAN OF A/C" in t
-        or ("PAYMENT CONFIRMATION RECEIPT" in t and "ESTABLISHMENT ID" in t)
-    )
-    if is_pf:
-        if "COMBINED CHALLAN OF A/C" in t:
-            return "PF", "Challan"
-        if "PAYMENT CONFIRMATION RECEIPT" in t:
-            return "PF", "Payment"
-        if "ARREAR" in t and "ELECTRONIC CHALLAN CUM RETURN" not in t:
-            return "PF", "Arrears"
-        if "ELECTRONIC CHALLAN CUM RETURN" in t or "(ECR)" in t:
-            return "PF", "Return"
-        return "PF", "Challan"
-
-    # ESIC — unique label (the ESIC doc is itself a challan/payment)
-    if "CHALLAN PERIOD:" in t and ("EMPLOYEE'S STATE INSURANCE" in t or "ESIC" in t):
-        return "ESIC", "Challan"
-
-    # PTRC — Maharashtra profession tax: FORM_IIIB return vs MTR-6 challan
-    is_ptrc = (
-        "FORM_IIIB" in t or "PROFESSION TAX" in t or "PTRC" in t
-        or ("MTR FORM" in t and "00280012" in t)
-    )
-    if is_ptrc:
-        if "FORM_IIIB" in t or "ELECTRONIC RETURN UNDER" in t:
-            return "PTRC", "Return"
-        if "MTR FORM" in t or "00280012" in t:
-            return "PTRC", "Challan"
-        return "PTRC", "Return"
-
-    # TDS — Income Tax challan (ITNS 280/281/282 etc.); the doc is a challan
-    if ("INCOME TAX DEPARTMENT" in t or "CHALLAN RECEIPT" in t) and (
-        "TAN" in t or "DATE OF DEPOSIT" in t or "NATURE OF PAYMENT" in t
-    ):
-        return "TDS", "Challan"
-
-    return "Unknown", "Unknown"
-
 
 # ── Helper ────────────────────────────────────────────────────────────────────
 
@@ -281,6 +208,7 @@ def run_unified_pipeline(
 
     records = []          # unified contract rows
     errors  = []          # failed files
+    audit_contexts = {}   # source file -> (preflight, classification), current run only
     raw_details = {k: [] for k in ("GSTR1", "GSTR3B", "ESIC", "PF", "PTRC", "TDS", "SB", "EBRC", "EWB")}
     sb_items = []         # shipping-bill line items (separate ledger)
 
@@ -293,13 +221,58 @@ def run_unified_pipeline(
                 if not pdf.pages:
                     raise ValueError("PDF has no pages")
 
-                first_text = pdf.pages[0].extract_text() or ""
-                return_type, doc_kind = detect_document(first_text)
+                preflight = preflight_pdf(pdf)
+                parse_pdf = pdf
+                if preflight["needs_ocr"]:
+                    ocr_pages = read_ocr_sidecar(fpath)
+                    if not ocr_pages:
+                        errors.append({
+                            "File": fname, "Error_Type": "NeedsOCR",
+                            "Message": "No usable text layer. This PDF needs local OCR before it can be parsed.",
+                            "Action": "Enable local OCR and run again. No file is uploaded.",
+                        })
+                        continue
+                    preflight = {
+                        "pages": len(ocr_pages), "text": "\n".join(ocr_pages),
+                        "page_text": ocr_pages, "needs_ocr": False,
+                        "sparse_text": sum(map(len, ocr_pages)) / len(ocr_pages) < 80,
+                        "ocr_used": True,
+                    }
+                    parse_pdf = OCRTextPdf(ocr_pages)
 
-                # If first page gave nothing, try full text
-                if return_type == "Unknown":
-                    full_text = "\n".join(p.extract_text() or "" for p in pdf.pages)
-                    return_type, doc_kind = detect_document(full_text)
+                classification = classify_document(preflight["text"])
+                page_types = {
+                    result["winner"]["return_type"]
+                    for page_text in preflight["page_text"]
+                    if (result := classify_document(page_text))["accepted"]
+                }
+                if len(page_types) > 1:
+                    errors.append({
+                        "File": fname, "Error_Type": "MixedDocument",
+                        "Message": "More than one statutory document type was detected in this PDF.",
+                        "Action": "Split the PDF into individual documents, then re-drop them.",
+                    })
+                    continue
+                if not classification["accepted"]:
+                    labels = ", ".join(candidate["return_type"] for candidate in classification["candidates"])
+                    errors.append({
+                        "File": fname,
+                        "Error_Type": "AmbiguousType" if labels else "UnknownType",
+                        "Message": "Could not classify this PDF confidently." + (f" Candidates: {labels}." if labels else ""),
+                        "Action": "Review the PDF and process it only after its statutory type is clear.",
+                    })
+                    continue
+                winner = classification["winner"]
+                return_type, doc_kind = winner["return_type"], winner["doc_kind"]
+                audit_contexts[fname] = (preflight, classification)
+
+                if preflight["ocr_used"] and return_type in {"GSTR1", "GSTR3B", "SB"}:
+                    errors.append({
+                        "File": fname, "Error_Type": "NeedsStructuredOCR",
+                        "Message": "This scanned layout needs table-aware OCR before its proven parser can be used.",
+                        "Action": "Keep the original PDF for review; this run did not extract a record.",
+                    })
+                    continue
 
                 # ── GSTR-1 ────────────────────────────────────────────────
                 if return_type == "GSTR1":
@@ -414,96 +387,20 @@ def run_unified_pipeline(
 
                 # ── ESIC ──────────────────────────────────────────────────
                 elif return_type == "ESIC":
-                    res = parse_esic(pdf, fname)
+                    res = parse_esic(parse_pdf, fname)
                     res["SourceFile"] = fname
                     raw_details["ESIC"].append(res)
 
                 # ── PF (Challan / ECR-Return / Arrears / Payment) ─────────
-                elif return_type == "PF":
-                    if doc_kind == "Return":
-                        res = parse_pf_ecr(pdf, fname)
-                    elif doc_kind == "Arrears":
-                        res = parse_pf_arrears(pdf, fname)
-                    elif doc_kind == "Payment":
-                        res = parse_pf_payment(pdf, fname)
-                    else:
-                        res = parse_pf(pdf, fname)      # Combined Challan
-                    res["SourceFile"] = fname
-
-                    flags_list = []
-                    if res["EntityID"] in ("Unknown", ""):
-                        flags_list.append("ENTITY?")
-                    if res.get("PeriodDate") is None:
-                        flags_list.append("PERIOD?")
-                    if not res.get("PrimaryAmount"):
-                        flags_list.append("AMT?")
-                    # challan-only internal check: employee vs employer EPF symmetry
-                    if res.get("DocKind") == "Challan":
-                        ee = res.get("Employee_EPF_AC01", 0)
-                        er = res.get("Employer_EPF_AC01", 0) + res.get("Employer_EPS_AC10", 0)
-                        if er > 0 and abs(ee - er) / max(er, 1) > 0.05:
-                            flags_list.append("EE<>ER?")
-
-                    records.append(_consolidated_row(res, fname, flags_list))
-                    raw_details["PF"].append(res)
+                elif return_type in REGISTERED_HANDLERS:
+                    record, detail = run_registered(
+                        return_type, parse_pdf, fname, doc_kind, _consolidated_row
+                    )
+                    records.append(record)
+                    raw_details[return_type].append(detail)
 
                 # ── PTRC (FORM_IIIB Return / MTR-6 Challan) ────────────────
-                elif return_type == "PTRC":
-                    res = parse_ptrc_challan(pdf, fname) if doc_kind == "Challan" else parse_ptrc(pdf, fname)
-                    res["SourceFile"] = fname
-
-                    flags_list = []
-                    if res["EntityID"] in ("Unknown", ""):
-                        flags_list.append("TIN?")
-                    if res.get("PeriodDate") is None:
-                        flags_list.append("PERIOD?")
-                    if not res.get("PrimaryAmount"):
-                        flags_list.append("AMT?")
-
-                    records.append(_consolidated_row(res, fname, flags_list))
-                    raw_details["PTRC"].append(res)
-
                 # ── TDS ───────────────────────────────────────────────────
-                elif return_type == "TDS":
-                    res = parse_tds(pdf, fname)
-                    res["SourceFile"] = fname
-
-                    flags_list = []
-                    if res["EntityID"] in ("Unknown", ""):
-                        flags_list.append("TAN?")
-                    if res["PeriodDate"] is None:
-                        flags_list.append("MONTH?")
-                    if abs(res.get("Crosscheck Diff", 0)) > 1.0:
-                        flags_list.append("CROSSCHECK")
-                    if res.get("Section", "Unknown") == "Unknown":
-                        flags_list.append("SECTION?")
-                    if res.get("Total Amount Paid", 0) <= 0:
-                        flags_list.append("AMT?")
-                    if res.get("PeriodEstimated"):
-                        flags_list.append("PERIOD_EST")
-
-                    flags  = "; ".join(flags_list)
-                    status = "Review" if flags_list else "OK"
-                    pd_date = res["PeriodDate"]
-
-                    records.append({
-                        "ReturnType":    "TDS",
-                        "DocKind":       "Challan",
-                        "EntityID":      res["EntityID"],
-                        "EntityName":    res["EntityName"],
-                        "FY":            res["FY"],
-                        "PeriodDate":    _fmt_date(pd_date),
-                        "MonthName":     pd.Timestamp(pd_date).strftime("%B") if pd_date else "Unknown",
-                        "MonthIndex":    _month_idx(pd_date),
-                        "Status":        status,
-                        "Flags":         flags,
-                        "PrimaryAmount": res.get("Total Amount Paid", 0),
-                        "DocRef":        res.get("DocRef", ""),
-                        "FilingDate":    res.get("FilingDate", None),
-                        "SourceFile":    fname,
-                    })
-                    raw_details["TDS"].append(res)
-
                 # ── Shipping Bill (ICEGATE) ───────────────────────────────
                 elif return_type == "SB":
                     doc = parse_shipping_bill(pdf, fname)
@@ -553,35 +450,9 @@ def run_unified_pipeline(
                         sb_items.append(row)
 
                 # ── eBRC (DGFT bank-realisation certificate) ──────────────
-                elif return_type == "EBRC":
-                    res = parse_ebrc(pdf, fname)
-                    res["SourceFile"] = fname
-                    flags_list = []
-                    if res["EntityID"] in ("Unknown", ""):
-                        flags_list.append("ENTITY?")
-                    if res.get("PeriodDate") is None:
-                        flags_list.append("PERIOD?")
-                    if not res.get("PrimaryAmount"):
-                        flags_list.append("AMT?")
-                    records.append(_consolidated_row(res, fname, flags_list))
-                    raw_details["EBRC"].append(res)
-
                 # ── e-Way Bill (GST movement of goods) ─────────────────────
-                elif return_type == "EWB":
-                    res = parse_ewb(pdf, fname)
-                    res["SourceFile"] = fname
-                    flags_list = []
-                    if res["EntityID"] in ("Unknown", ""):
-                        flags_list.append("ENTITY?")
-                    if res.get("PeriodDate") is None:
-                        flags_list.append("PERIOD?")
-                    if not res.get("PrimaryAmount"):
-                        flags_list.append("AMT?")
-                    records.append(_consolidated_row(res, fname, flags_list))
-                    raw_details["EWB"].append(res)
-
                 else:
-                    scanned = not first_text.strip()
+                    scanned = preflight["needs_ocr"]
                     errors.append({
                         "File":       fname,
                         "Error_Type": "NoTextLayer" if scanned else "UnknownType",
@@ -647,6 +518,22 @@ def run_unified_pipeline(
     # ── Reconcile declared vs paid (mutates records' Flags/Status on mismatch) ──
     reconciliation = _reconcile(records)
 
+    # ── Audit gate: no ambiguous or incomplete record reaches OK ───────────────
+    evidence_rows = []
+    finding_rows = []
+    audited_records = []
+    for record in records:
+        context = audit_contexts.get(record.get("SourceFile"))
+        if context is None:
+            audited_records.append(record)
+            continue
+        preflight, classification = context
+        audited, findings, evidence = audit_record(record, classification, preflight)
+        audited_records.append(audited)
+        finding_rows.extend(findings)
+        evidence_rows.extend(evidence)
+    records = audited_records
+
     # ── Build the consolidated ledger ──
     df_all = pd.DataFrame(records)
     if not df_all.empty:
@@ -657,7 +544,8 @@ def run_unified_pipeline(
             ).dt.strftime("%Y-%m-%d")
         # Column order: identity first, then status/amounts
         lead = ["ReturnType", "DocKind", "EntityID", "EntityName", "FY",
-                "PeriodDate", "MonthName", "Status", "Flags", "PrimaryAmount",
+                "PeriodDate", "MonthName", "Status", "Confidence", "ConfidenceGrade",
+                "ProfileVersion", "OCRUsed", "ValidationFindings", "Flags", "PrimaryAmount",
                 "DocRef", "FilingDate", "SourceFile"]
         df_all = df_all[[c for c in lead if c in df_all.columns]
                         + [c for c in df_all.columns if c not in lead]]
@@ -685,6 +573,10 @@ def run_unified_pipeline(
             write_sheet(xw, df_dash, "Dashboard", sort=False)
         if reconciliation:
             write_sheet(xw, pd.DataFrame(reconciliation), "Reconciliation", sort=False)
+        if finding_rows:
+            write_sheet(xw, pd.DataFrame(finding_rows), "Validation_Findings", sort=False)
+        if evidence_rows:
+            write_sheet(xw, pd.DataFrame(evidence_rows), "Review_Evidence", sort=False)
         for rtype, rlist in raw_details.items():
             if rlist:
                 write_sheet(xw, _detail_df(rlist), rtype, sort=False)
@@ -696,6 +588,23 @@ def run_unified_pipeline(
         if df_all.empty and not errors and not sb_items:
             xw.book.add_worksheet("Empty")
 
+    reviews = []
+    for record in records:
+        if record.get("Status") == "OK":
+            continue
+        source = record.get("SourceFile")
+        reviews.append({
+            "SourceFile": source,
+            "ReturnType": record.get("ReturnType"),
+            "DocKind": record.get("DocKind"),
+            "Status": record.get("Status"),
+            "Confidence": record.get("Confidence"),
+            "ConfidenceGrade": record.get("ConfidenceGrade"),
+            "ProfileVersion": record.get("ProfileVersion"),
+            "Findings": [row for row in finding_rows if row.get("SourceFile") == source],
+            "Evidence": [row for row in evidence_rows if row.get("SourceFile") == source],
+        })
+
     log("3", f"Pipeline complete. {len(records)} records, {len(errors)} errors.")
     return {
         "workbook":       path_xlsx,
@@ -704,4 +613,5 @@ def run_unified_pipeline(
         "dashboard":      _json_records(df_dash),
         "reconciliation": reconciliation,
         "errors":         errors,
+        "reviews":        reviews,
     }

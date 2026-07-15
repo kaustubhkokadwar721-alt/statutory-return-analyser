@@ -1,5 +1,1 @@
-"""GSTR-3B parser, checks, analytics, and pipeline."""
-
-from .pipeline import run_pipeline_gstr3b
-
-__all__ = ["run_pipeline_gstr3b"]
+"""GSTR-3B parser and checks used by the browser engine."""
