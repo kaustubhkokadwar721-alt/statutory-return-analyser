@@ -14,8 +14,8 @@ from tkinter import Button, Label, Tk, messagebox
 def web_root() -> Path:
     """Find the bundled browser app beside the packaged launcher."""
     if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent / "gstr_web"
-    return Path(__file__).resolve().parents[1] / "gstr_web"
+        return Path(sys.executable).resolve().parent / "web_app"
+    return Path(__file__).resolve().parents[1] / "web_app"
 
 
 class LocalHandler(http.server.SimpleHTTPRequestHandler):

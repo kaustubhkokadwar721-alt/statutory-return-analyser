@@ -1,7 +1,7 @@
 # GSTR Return Analyser (Legacy Desktop Source)
 
 This desktop package is retained for historical reference only. The maintained
-product and sole parser engine are under `gstr_web/engine/`, where all future
+product and sole parser engine are under `web_app/engine/`, where all future
 changes must be made for the browser-only, local-processing application.
 
 Batch-process GSTR-1 and GSTR-3B PDFs downloaded from the GST portal into

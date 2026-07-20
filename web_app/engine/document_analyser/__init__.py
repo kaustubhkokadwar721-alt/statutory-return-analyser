@@ -1,5 +1,5 @@
 """
-gstr_analyser — GSTR Return Analyser package.
+document_analyser - local audit-document extraction package.
 
 Sub-packages:
     gstr1  — GSTR-1 parser, sanity checks, analytics, pipeline

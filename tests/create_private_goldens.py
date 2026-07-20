@@ -10,9 +10,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "gstr_web" / "engine"))
+sys.path.insert(0, str(ROOT / "web_app" / "engine"))
 
-from gstr_analyser.pipeline_csv import run_unified_pipeline
+from document_analyser.statutory_pipeline import run_unified_pipeline
 
 
 STABLE_FIELDS = (

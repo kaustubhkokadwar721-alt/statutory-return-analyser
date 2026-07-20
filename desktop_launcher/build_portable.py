@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "gstr_web"
+SOURCE = ROOT / "web_app"
 LAUNCHER = ROOT / "desktop_launcher" / "launcher.py"
 BUILD = ROOT / "desktop_launcher" / "build"
 RELEASE = ROOT / "release" / "StatutoryReturnAnalyser"
@@ -27,7 +27,7 @@ def reset(path: Path) -> None:
 
 
 def copy_app() -> None:
-    app = RELEASE / "gstr_web"
+    app = RELEASE / "web_app"
     app.mkdir()
     for name in APP_FILES:
         shutil.copy2(SOURCE / name, app / name)

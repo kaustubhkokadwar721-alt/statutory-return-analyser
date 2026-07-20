@@ -3,11 +3,11 @@ import unittest
 from pathlib import Path
 
 
-ENGINE = Path(__file__).resolve().parents[1] / "gstr_web" / "engine"
+ENGINE = Path(__file__).resolve().parents[1] / "web_app" / "engine"
 sys.path.insert(0, str(ENGINE))
 
-from gstr_analyser.compliance_parsers import parse_tds
-from gstr_analyser.handler_registry import _validate_tds
+from document_analyser.compliance_parsers import parse_tds
+from document_analyser.handler_registry import _validate_tds
 
 
 class _Page:

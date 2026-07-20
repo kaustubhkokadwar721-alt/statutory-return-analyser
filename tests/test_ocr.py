@@ -4,10 +4,10 @@ import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "gstr_web" / "engine"))
+sys.path.insert(0, str(ROOT / "web_app" / "engine"))
 
-from gstr_analyser.audit import audit_record
-from gstr_analyser.ocr import OCRTextPdf, read_ocr_sidecar
+from document_analyser.audit import audit_record
+from document_analyser.ocr import OCRTextPdf, read_ocr_sidecar
 
 
 class OCRAdapterTests(unittest.TestCase):

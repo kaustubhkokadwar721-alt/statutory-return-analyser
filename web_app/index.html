@@ -79,6 +79,15 @@
       <circle cx="12" cy="18.5" r="2.7"/>
       <path d="M10 20.6l-1 2.4 3-1.3 3 1.3-1-2.4"/>
     </symbol>
+    <symbol id="i-bank" viewBox="0 0 24 24">
+      <path d="M4 9L12 4l8 5"/>
+      <path d="M5 9h14M6.5 12v6M10.2 12v6M13.8 12v6M17.5 12v6M4 20h16"/>
+    </symbol>
+    <symbol id="i-fd" viewBox="0 0 24 24">
+      <path d="M6 4h12v16H6z"/>
+      <path d="M9 8h6M9 12h6M9 16h3"/>
+      <circle cx="16.5" cy="16.5" r="3"/>
+    </symbol>
     <!-- UI glyphs -->
     <symbol id="i-upload" viewBox="0 0 24 24">
       <path d="M12 15.5V5"/>
@@ -144,7 +153,12 @@
 
       <ol id="bootDiag" class="diag" hidden></ol>
 
-      <ul class="types" aria-label="Document types handled">
+      <div class="mode-switch" role="radiogroup" aria-label="Choose document family">
+        <button type="button" class="mode-btn active" data-mode="auto" role="radio" aria-checked="true">Statutory returns</button>
+        <button type="button" class="mode-btn" data-mode="bank" role="radio" aria-checked="false">Bank &amp; FD statements</button>
+      </div>
+
+      <ul class="types" id="statutoryTypes" aria-label="Statutory document types handled">
         <li class="type t-gstr1"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-gstr1"/></svg></span><b>GSTR-1</b><i>Outward supplies</i></li>
         <li class="type t-gstr3b"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-gstr3b"/></svg></span><b>GSTR-3B</b><i>Monthly summary</i></li>
         <li class="type t-tds"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-tds"/></svg></span><b>TDS</b><i>Challan 281</i></li>
@@ -156,10 +170,16 @@
         <li class="type t-ewb"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-ewb"/></svg></span><b>e-Way Bill</b><i>GST transit</i></li>
       </ul>
 
+      <ul class="types banking-types" id="bankingTypes" aria-label="Bank document types handled" hidden>
+        <li class="type t-bank"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-bank"/></svg></span><b>Bank Statement</b><i>Current &amp; savings</i></li>
+        <li class="type t-loan"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-bank"/></svg></span><b>Loan &amp; CC</b><i>PCFC and cash credit</i></li>
+        <li class="type t-fd"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-fd"/></svg></span><b>Fixed Deposits</b><i>Balance &amp; interest</i></li>
+      </ul>
+
       <div id="drop" class="drop" role="button" tabindex="0" aria-label="Drop PDFs here or press Enter to browse">
         <span class="drop-ic"><svg viewBox="0 0 24 24"><use href="#i-upload"/></svg></span>
         <div class="drop-big">Drop PDFs here</div>
-        <div class="drop-small">any mix of the nine types · or click to browse</div>
+        <div class="drop-small" id="dropHelp">any mix of the nine types · or click to browse</div>
         <input type="file" id="picker" accept="application/pdf" multiple hidden>
       </div>
 
@@ -175,7 +195,7 @@
         <label class="ocr-toggle" title="Runs the bundled OCR engine in this browser only. Scanned GSTR and Shipping Bill layouts remain review-only until structured OCR is added.">
           <input type="checkbox" id="ocrEnabled" checked> OCR scanned PDFs
         </label>
-        <span class="run-hint">Auto-detects each document’s type</span>
+        <span class="run-hint" id="runHint">Auto-detects each document’s type</span>
       </div>
       <div id="log" class="log"></div>
 

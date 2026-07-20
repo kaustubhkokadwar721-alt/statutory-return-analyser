@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 
-WEB = Path(__file__).resolve().parents[1] / "gstr_web"
+WEB = Path(__file__).resolve().parents[1] / "web_app"
 sys.path.insert(0, str(WEB))
 
 import vendor_ocr

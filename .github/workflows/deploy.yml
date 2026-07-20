@@ -23,9 +23,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
-      - name: Upload web app (gstr_web/)
+      - name: Upload web app (web_app/)
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./gstr_web
+          path: ./web_app
       - id: deployment
         uses: actions/deploy-pages@v4

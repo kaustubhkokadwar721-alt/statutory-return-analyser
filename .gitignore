@@ -26,6 +26,7 @@ Samples/
 *_output/
 tests/private_fixtures/
 tests/private_expected/
+tests/private_bank_expected/
 
 # ── OS / editor cruft ──
 Thumbs.db

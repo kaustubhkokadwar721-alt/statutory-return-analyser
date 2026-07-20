@@ -1,4 +1,4 @@
-"""Vendor and verify the pinned browser OCR runtime. Run from gstr_web/."""
+"""Vendor and verify the pinned browser OCR runtime. Run from web_app/."""
 
 from __future__ import annotations
 

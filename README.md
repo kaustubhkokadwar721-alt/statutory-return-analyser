@@ -19,7 +19,7 @@ WebAssembly). Your PDFs are parsed in an in-memory sandbox and never sent anywhe
 
 The whole app (Python runtime, libraries, fonts) is **vendored locally**, so once the page
 loads it makes **zero network calls** — open DevTools → Network and watch it stay empty
-after boot. A [service worker](gstr_web/sw.js) caches the runtime on first visit, so later
+after boot. A [service worker](web_app/sw.js) caches the runtime on first visit, so later
 launches are instant and the app keeps working **fully offline** (real air-gap use — pull
 the network cable after one load and it still parses).
 
@@ -59,6 +59,10 @@ A single premium theme (`themes/prime.css`): a calm, institutional layout with a
 financial serif (Spectral) for headings and a humanist sans (Hanken Grotesk) for data,
 with saturated colour reserved for status. All fonts are vendored, so it works offline.
 
+The maintained [web style guide](docs/web-style-guide.md) defines the design principles,
+tokens, components, task patterns, content rules, accessibility target, privacy rules,
+and visual acceptance checks for future UI work.
+
 ---
 
 ## Run locally
@@ -66,7 +70,7 @@ with saturated colour reserved for status. All fonts are vendored, so it works o
 No build step. Any static server works:
 
 ```bash
-cd gstr_web
+cd web_app
 python -m http.server 8000
 # open http://localhost:8000
 ```
@@ -77,7 +81,7 @@ telling you to serve it over HTTP. It needs a URL, not a double-click.
 
 ## Deploying it
 
-It's a static folder — host `gstr_web/` anywhere that serves files over HTTP. The current
+It's a static folder — host `web_app/` anywhere that serves files over HTTP. The current
 build is on GitHub Pages (see the link at the top). Two things to check on other hosts:
 
 - **All paths are relative**, so it works under a subpath (e.g. `example.com/tools/returns/`)
@@ -109,15 +113,16 @@ PDFs (in browser)
   → app.js reads the CSVs back and renders the dashboard + downloads
 ```
 
-The browser engine is `gstr_web/engine/` (a Pyodide-friendly build of the parser package);
-`web_bootstrap.run("auto", …)` drives `gstr_analyser/pipeline_csv.py`. After editing any
+The browser engine is `web_app/engine/` (a Pyodide-friendly build of the parser package);
+`web_bootstrap.run("auto", …)` drives `document_analyser/statutory_pipeline.py`, while
+bank mode drives `document_analyser/banking/pipeline.py`. After editing any
 engine file, rebuild `engine.zip` (Python `zipfile`, forward-slash arcnames, rooted at
 `engine/`) so the browser picks up the change.
 
 ## Repo layout
 
 ```
-gstr_web/            # the browser app (deployed to Pages)
+web_app/             # the browser app (deployed to Pages)
   index.html         #   UI (+ noscript / old-browser guards)
   app.js             #   Pyodide glue (boot, diagnostics, run, render, download)
   sw.js              #   service worker — offline cache of the runtime
@@ -125,8 +130,9 @@ gstr_web/            # the browser app (deployed to Pages)
   fonts/             #   vendored woff2 (Spectral + Hanken Grotesk)
   pyodide/  wheels/  #   vendored runtime + Python wheels
   engine/            #   maintained parser package, zipped to engine.zip
-    gstr_analyser/pipeline_csv.py       # unified auto-detect pipeline
-    gstr_analyser/compliance_parsers.py # ESIC / PF / PTRC / TDS parsers
+    document_analyser/statutory_pipeline.py # statutory auto-detect pipeline
+    document_analyser/banking/              # bank and fixed-deposit pipeline
+    document_analyser/compliance_parsers.py # ESIC / PF / PTRC / TDS parsers
 docs/                # small product and future-work notes
 desktop_launcher/    # local-only Windows launcher and portable-package builder
 legacy/              # historical desktop, Power Query, and workbook material
@@ -137,7 +143,7 @@ legacy/              # historical desktop, Power Query, and workbook material
 ## Rebuilding the offline bundle
 
 ```bash
-cd gstr_web
+cd web_app
 python package_engine.py   # rebuild engine.zip from engine/
 python build_offline.py    # refresh vendored Pyodide runtime + Python wheels
 ```

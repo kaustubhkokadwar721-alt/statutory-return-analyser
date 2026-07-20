@@ -24,9 +24,10 @@ pyodide/ and wheels/   local Python runtime and dependencies
 ocr/                   local PDF rendering and OCR runtime
 ```
 
-`engine/gstr_analyser/pipeline_csv.py` is the single parser entry point. Each return
-keeps its specialised parser and checks in its own module. Do not edit `engine.zip`
-directly.
+`engine/document_analyser/statutory_pipeline.py` handles statutory documents, while
+`engine/document_analyser/banking/pipeline.py` handles bank and fixed-deposit documents.
+Each document family keeps its specialised profiles and checks in its own module. Do
+not edit `engine.zip` directly.
 
 ## Rebuild and verify
 

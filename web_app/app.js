@@ -22,6 +22,7 @@ let reconciliation = [];  // per-period declared-vs-paid tie-out rows
 let parseErrors    = [];  // files that could not be parsed at all
 let reviews        = [];  // local audit evidence for records needing attention
 let pdfjsPromise    = null;
+let activeMode      = "auto";
 
 // ---- dom ----
 const $ = (s) => document.querySelector(s);
@@ -35,6 +36,7 @@ const picker     = $("#picker");
 const resultsEl  = $("#results");
 const resultsTab = $("#tabResults");
 const ocrEnabled = $("#ocrEnabled");
+const modeButtons = [...document.querySelectorAll(".mode-btn")];
 
 function setStatus(text, cls) {
   statusText.textContent = text;
@@ -92,6 +94,8 @@ const TYPE_META = {
   SB:     { icon: "i-sb",     cls: "t-sb",     label: "Ship. Bill" },
   EBRC:   { icon: "i-ebrc",   cls: "t-ebrc",   label: "eBRC" },
   EWB:    { icon: "i-ewb",    cls: "t-ewb",    label: "e-Way Bill" },
+  BANK:   { icon: "i-bank",   cls: "t-bank",   label: "Bank" },
+  FD:     { icon: "i-fd",     cls: "t-fd",     label: "Fixed Deposit" },
 };
 function typeCell(rt) {
   const m = TYPE_META[rt];
@@ -100,7 +104,10 @@ function typeCell(rt) {
 }
 
 // ---- document-kind badge: Return / Challan / Payment / Arrears ----
-const KIND_CLASS = { Return: "k-return", Challan: "k-challan", Payment: "k-payment", Arrears: "k-arrears" };
+const KIND_CLASS = {
+  Return: "k-return", Challan: "k-challan", Payment: "k-payment", Arrears: "k-arrears",
+  Statement: "k-return", Certificate: "k-payment",
+};
 function kindCell(k) {
   if (!k) return "—";
   return `<span class="kcell ${KIND_CLASS[k] || ""}">${esc(k)}</span>`;
@@ -108,6 +115,34 @@ function kindCell(k) {
 
 // ---- file selection ----
 let fileTags = {};  // name -> {type, status} once parsed
+
+function setMode(mode) {
+  if (!["auto", "bank"].includes(mode) || mode === activeMode) return;
+  activeMode = mode;
+  modeButtons.forEach((button) => {
+    const selected = button.dataset.mode === mode;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-checked", selected ? "true" : "false");
+  });
+  document.getElementById("statutoryTypes").hidden = mode === "bank";
+  document.getElementById("bankingTypes").hidden = mode !== "bank";
+  document.getElementById("dropHelp").textContent = mode === "bank"
+    ? "bank, loan and fixed-deposit PDFs · or click to browse"
+    : "any mix of the nine types · or click to browse";
+  document.getElementById("runHint").textContent = mode === "bank"
+    ? "Checks every statement against its balances"
+    : "Auto-detects each document’s type";
+  ocrEnabled.parentElement.title = mode === "bank"
+    ? "Runs local OCR in this browser. Scanned bank tables stay review-only unless their row structure is clear."
+    : "Runs the bundled OCR engine in this browser only.";
+  fileTags = {};
+  consolidated = []; dashboard = []; reconciliation = []; parseErrors = []; reviews = [];
+  resultsTab.hidden = true;
+  renderFiles();
+  selectTab(0);
+}
+
+modeButtons.forEach((button) => button.addEventListener("click", () => setMode(button.dataset.mode)));
 
 function uniqueSandboxName(filename) {
   const used = new Set(pickedFiles.map((file) => file.name.toLowerCase()));
@@ -434,9 +469,10 @@ async function ocrScannedFiles(errors) {
 }
 
 async function runEngine() {
+  pyodide.globals.set("run_kind", activeMode);
   const resultJson = await pyodide.runPythonAsync(`
 import web_bootstrap, json
-result = web_bootstrap.run("auto", "/work/in", "/work/out", progress_cb=progress_cb)
+result = web_bootstrap.run(str(run_kind), "/work/in", "/work/out", progress_cb=progress_cb)
 json.dumps(result)
   `);
   return JSON.parse(resultJson);
@@ -445,6 +481,7 @@ json.dumps(result)
 runBtn.addEventListener("click", async () => {
   if (!ready || pickedFiles.length === 0) return;
   runBtn.disabled = true;
+  modeButtons.forEach((button) => { button.disabled = true; });
   consolidated = []; dashboard = []; reconciliation = []; parseErrors = []; reviews = [];
   resultsEl.classList.remove("show");
   // release blob URLs from the previous run before discarding the buttons
@@ -462,7 +499,9 @@ for d in ("/work/in", "/work/out"):
     os.makedirs(d, exist_ok=True)
     `);
     for (const f of pickedFiles) FS.writeFile("/work/in/" + f.name, f.bytes);
-    log(`${pickedFiles.length} PDF(s) written to sandbox. Auto-detecting return types…`);
+    log(`${pickedFiles.length} PDF(s) written to sandbox. ${
+      activeMode === "bank" ? "Identifying bank layouts and checking balances" : "Auto-detecting return types"
+    }…`);
 
     const progress = (step, detail) => log(`  [${step}] ${detail || ""}`);
     pyodide.globals.set("progress_cb", progress);
@@ -520,6 +559,7 @@ for d in ("/work/in", "/work/out"):
     console.error(e);
   } finally {
     runBtn.disabled = false;
+    modeButtons.forEach((button) => { button.disabled = false; });
     maybeEnableRun();
   }
 });
@@ -551,8 +591,13 @@ function renderDashboard() {
     ["Errors", by("Error"), "error", flaggable],
   ];
   if (failed) kpis.push(["Unreadable", failed, "error", false]);
-  kpis.push(["Declared ₹", money(declared), "", false]);
-  kpis.push(["Paid ₹", money(paid), "", false]);
+  if (activeMode === "bank") {
+    const extractedRows = consolidated.reduce((sum, row) => sum + (Number(row.RowsExtracted) || 0), 0);
+    kpis.push(["Rows extracted", extractedRows, "", false]);
+  } else {
+    kpis.push(["Declared ₹", money(declared), "", false]);
+    kpis.push(["Paid ₹", money(paid), "", false]);
+  }
   document.getElementById("kpis").innerHTML = kpis
     .map(([l, v, c, click]) =>
       `<div class="kpi ${c}${click ? " clickable" : ""}"${click ? ` role="button" tabindex="0" data-filter="1" aria-label="Show flagged records"` : ""}>` +
@@ -672,6 +717,8 @@ function renderBadFiles() {
   const labels = {
     NeedsOCR: "Needs OCR", NeedsStructuredOCR: "Needs structured OCR",
     MixedDocument: "Mixed document", AmbiguousType: "Needs review", UnknownType: "Unknown type",
+    EncryptedPDF: "Password protected", UnsupportedDocument: "Different document",
+    UnknownBankLayout: "Unknown bank layout",
   };
   const reviewTypes = new Set(Object.keys(labels));
   el.innerHTML =
@@ -712,6 +759,32 @@ function renderReconciliation() {
   if (!reconciliation.length) { sec.hidden = true; el.innerHTML = ""; return; }
   sec.hidden = false;
 
+  if (activeMode === "bank") {
+    const rows = reconciliation.slice().sort((a, b) =>
+      String(a.Status).localeCompare(String(b.Status)) ||
+      String(a.Bank).localeCompare(String(b.Bank)) ||
+      String(a.SourceFile).localeCompare(String(b.SourceFile)));
+    const matched = rows.filter((row) => row.Status === "PASS").length;
+    document.getElementById("reconCount").textContent = `${matched}/${rows.length} balanced`;
+    const head = ["Bank", "Account", "Opening ₹", "Debits ₹", "Credits ₹", "Expected close ₹", "Closing ₹", "Difference", "Status"];
+    const body = rows.map((row) => {
+      const cls = row.Status === "PASS" ? "ok" : "review";
+      return `<tr>
+        <td>${esc(row.Bank)}</td>
+        <td class="ell ref" title="${esc(row.AccountNumber)}">${esc(row.AccountNumber || "—")}</td>
+        <td class="num">${money(row.OpeningBalance)}</td>
+        <td class="num">${money(row.TotalDebit)}</td>
+        <td class="num">${money(row.TotalCredit)}</td>
+        <td class="num">${money(row.ExpectedClosing)}</td>
+        <td class="num">${money(row.ClosingBalance)}</td>
+        <td class="num ${Math.abs(Number(row.Difference) || 0) > 0.05 ? "err" : ""}">${money(row.Difference)}</td>
+        <td><span class="pill ${cls}">${esc(row.Status)}</span></td></tr>`;
+    }).join("");
+    el.innerHTML =
+      `<table class="tbl"><thead><tr>${head.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table>`;
+    return;
+  }
+
   const rank = { Mismatch: 0, "Unpaid?": 1, "No demand doc": 1 };
   const rows = reconciliation.slice().sort((a, b) =>
     (rank[a.Status] ?? 2) - (rank[b.Status] ?? 2) ||
@@ -751,9 +824,12 @@ function addWorkbookResult(bytes, name, recordCount) {
 
   const div = document.createElement("div");
   div.className = "dl dl-all";
+  const workbookContents = activeMode === "bank"
+    ? "transactions, deposits, balance checks and review findings"
+    : "every ledger, dashboard and reconciliation";
   div.innerHTML =
     `<span class="dl-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-csv"/></svg></span>` +
-    `<div class="n">Workbook<span class="s">${esc(filename)} · ${fmtSize(bytes.length)} — every ledger, dashboard &amp; reconciliation in one Excel file</span></div>`;
+    `<div class="n">Workbook<span class="s">${esc(filename)} · ${fmtSize(bytes.length)} — ${esc(workbookContents)} in one Excel file</span></div>`;
 
   const a = document.createElement("a");
   a.className = "btn";

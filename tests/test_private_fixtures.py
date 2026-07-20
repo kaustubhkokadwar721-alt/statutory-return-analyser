@@ -8,12 +8,12 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ENGINE = ROOT / "gstr_web" / "engine"
+ENGINE = ROOT / "web_app" / "engine"
 FIXTURES = ROOT / "tests" / "private_fixtures"
 EXPECTED = ROOT / "tests" / "private_expected"
 sys.path.insert(0, str(ENGINE))
 
-from gstr_analyser.pipeline_csv import run_unified_pipeline
+from document_analyser.statutory_pipeline import run_unified_pipeline
 
 
 @unittest.skipUnless(FIXTURES.is_dir() and EXPECTED.is_dir(), "private client fixtures are not installed")

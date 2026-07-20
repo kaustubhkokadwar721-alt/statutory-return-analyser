@@ -21,3 +21,8 @@ Each JSON file has this form:
 
 Only assert stable, review-relevant fields. Never add client PDFs or extracted
 data to Git.
+
+For bank statements, keep the PDFs outside this repository, set
+`BANK_PRIVATE_FIXTURES` to their folder, and place reviewed field-level JSON in
+the git-ignored `private_bank_expected/` directory. The normal discovery
+command then runs those checks when both locations are present.

@@ -1,5 +1,5 @@
 """Vendor Pyodide runtime + all wheels locally so the app runs with ZERO network.
-Run from gstr_web/ :  python build_offline.py
+Run from web_app/ :  python build_offline.py
 """
 import json, os, sys, subprocess, urllib.request
 

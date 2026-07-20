@@ -4,10 +4,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 
-ENGINE = Path(__file__).resolve().parents[1] / "gstr_web" / "engine"
+ENGINE = Path(__file__).resolve().parents[1] / "web_app" / "engine"
 sys.path.insert(0, str(ENGINE))
 
-from gstr_analyser import handler_registry
+from document_analyser import handler_registry
 
 
 class HandlerRegistryTests(unittest.TestCase):
