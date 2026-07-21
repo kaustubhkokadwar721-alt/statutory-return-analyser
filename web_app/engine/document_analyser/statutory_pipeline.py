@@ -12,6 +12,8 @@ from .gstr1.parser import parse_gstr1
 from .gstr1.checks import run_sanity_checks_gstr1
 from .gstr3b.parser import parse_complete_gstr3b
 from .gstr3b.checks import run_sanity_checks_gstr3b
+from .gstr3b.reporting import ANALYSIS_COLUMNS as GSTR3B_ANALYSIS_COLUMNS
+from .gstr3b.reporting import build_analysis_row as build_gstr3b_analysis_row
 from .compliance_parsers import (
     parse_esic,
 )
@@ -212,6 +214,7 @@ def run_unified_pipeline(
     errors  = []          # failed files
     audit_contexts = {}   # source file -> (preflight, classification), current run only
     raw_details = {k: [] for k in ("GSTR1", "GSTR3B", "ESIC", "PF", "PTRC", "TDS", "SB", "EBRC", "EWB")}
+    gstr3b_analysis = []
     sb_items = []         # shipping-bill line items (separate ledger)
     sb_invoice_summaries = []
 
@@ -347,8 +350,18 @@ def run_unified_pipeline(
                     period = meta.get("Period_Year", "Unknown")
 
                     _, chk_errs = run_sanity_checks_gstr3b(file_tables, gstin, period)
-                    flags  = "; ".join(e["Check"] for e in chk_errs)
-                    status = "Error" if any(e.get("Audit_Status") == "FAIL" for e in chk_errs) else ("Review" if flags else "OK")
+                    analysis_row, missing_fields = build_gstr3b_analysis_row(res, fname)
+                    flag_codes = [e["Check"] for e in chk_errs]
+                    if missing_fields:
+                        flag_codes.append("GSTR3B_FIELDS_MISSING")
+                    flags = "; ".join(dict.fromkeys(flag_codes))
+                    status = "Review" if flags else "OK"
+                    analysis_row.update({
+                        "Status": status,
+                        "Validation Findings": "; ".join(e["Check"] for e in chk_errs),
+                        "Missing Fields": "; ".join(missing_fields),
+                    })
+                    gstr3b_analysis.append(analysis_row)
 
                     primary_amt = 0.0
                     t61 = file_tables.get("Table_6_1")
@@ -591,6 +604,14 @@ def run_unified_pipeline(
             write_sheet(xw, pd.DataFrame(finding_rows), "Validation_Findings", sort=False)
         if evidence_rows:
             write_sheet(xw, pd.DataFrame(evidence_rows), "Review_Evidence", sort=False)
+        if gstr3b_analysis:
+            df_gstr3b_analysis = pd.DataFrame(gstr3b_analysis).reindex(
+                columns=GSTR3B_ANALYSIS_COLUMNS
+            )
+            df_gstr3b_analysis = df_gstr3b_analysis.sort_values(
+                ["Return Period", "GSTIN", "Source File"], na_position="last"
+            )
+            write_sheet(xw, df_gstr3b_analysis, "GSTR3B_Analysis", sort=False)
         for rtype, rlist in raw_details.items():
             if rlist:
                 write_sheet(xw, _detail_df(rlist), rtype, sort=False)

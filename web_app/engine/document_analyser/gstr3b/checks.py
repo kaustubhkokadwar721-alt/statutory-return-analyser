@@ -71,7 +71,8 @@ def run_sanity_checks_gstr3b(
         section = df4["Section"].astype(str)
         a_rows = df4[section.str.startswith("A.", na=False)]
         b_rows = df4[section.str.startswith("B.", na=False)]
-        c_rows = df4[section.str.startswith("C.", na=False)]
+        details = df4.get("Details", pd.Series("", index=df4.index)).astype(str)
+        c_rows = df4[details.str.contains(r"Net ITC available", case=False, na=False)]
 
         for tax_col in TAX_HEADS:
             if tax_col not in df4.columns:
