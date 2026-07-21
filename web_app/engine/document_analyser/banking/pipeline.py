@@ -293,6 +293,9 @@ def run_bank_pipeline(input_dir: str, output_dir: str, progress_cb=None) -> dict
             TotalAmount=("PrimaryAmount", "sum"),
         ).reset_index()
 
+    flagged_count = sum(record.get("Status") != "OK" for record in records) + len(errors)
+    log("BANK", f"Validation complete. {flagged_count} flagged.")
+    log("BANK", "Writing workbook...")
     workbook_name = "Bank_Statements.xlsx"
     workbook_path = os.path.join(output_dir, workbook_name)
     with pd.ExcelWriter(workbook_path, engine="xlsxwriter") as writer:
@@ -313,6 +316,8 @@ def run_bank_pipeline(input_dir: str, output_dir: str, progress_cb=None) -> dict
             df_errors,
         )):
             writer.book.add_worksheet("Empty")
+
+    log("BANK", "Workbook written.")
 
     reviews = []
     for record in records:

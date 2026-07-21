@@ -180,9 +180,19 @@
         </div>
       </header>
 
-      <div class="activity-strip" id="activityStrip" hidden>
-        <span id="activityText">Working...</span>
-        <span class="activity-track" aria-hidden="true"><span></span></span>
+      <div class="activity-strip" id="activityStrip" aria-live="polite" hidden>
+        <div class="activity-head">
+          <span id="activityText">Preparing files...</span>
+          <strong id="activityPercent">0%</strong>
+        </div>
+        <span class="activity-track" id="activityTrack" role="progressbar" aria-label="Processing progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <span id="activityBar"></span>
+        </span>
+        <div class="activity-facts">
+          <span><b id="progressParsed">0/0</b> Parsed</span>
+          <span><b id="progressFlags">Pending</b> Flags</span>
+          <span><b id="progressWorkbook">Waiting</b> Workbook</span>
+        </div>
       </div>
 
       <div class="mode-switch" role="radiogroup" aria-label="Choose document family">
@@ -209,13 +219,13 @@
         <input type="file" id="picker" accept="application/pdf" multiple hidden>
       </div>
 
+      <span class="run-hint" id="runHint">Auto-detects each document's type</span>
       <div class="queue-head" id="filesBar"></div>
       <div id="fileChips" class="fchips"></div>
       <div class="files-table" id="filesTable">
-        <div class="files-columns"><span>File</span><span>Type</span><span>Status</span><span>Size</span><span></span></div>
+        <div class="files-columns"><span>File</span><span>Type</span><span>Status</span><span class="num">Size</span><span></span></div>
         <div id="files" class="files"></div>
       </div>
-      <span class="run-hint" id="runHint">Auto-detects each document's type</span>
       <div id="log" class="log"></div>
     </section>
 

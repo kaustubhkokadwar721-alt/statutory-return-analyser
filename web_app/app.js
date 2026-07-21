@@ -38,16 +38,97 @@ const reconcileTab = $("#tabReconcile");
 const exportWorkbook = $("#exportWorkbook");
 const ocrEnabled = $("#ocrEnabled");
 const modeButtons = [...document.querySelectorAll(".mode-btn")];
+const activityStrip = $("#activityStrip");
+const activityText = $("#activityText");
+const activityPercent = $("#activityPercent");
+const activityTrack = $("#activityTrack");
+const activityBar = $("#activityBar");
+const progressParsed = $("#progressParsed");
+const progressFlags = $("#progressFlags");
+const progressWorkbook = $("#progressWorkbook");
+
+const runProgress = {
+  total: 0,
+  parsed: 0,
+  flags: null,
+  workbook: "Waiting",
+  percent: 0,
+};
 
 function setStatus(text, cls) {
   statusText.textContent = text;
   dot.className = "dot " + (cls || "");
-  const strip = document.getElementById("activityStrip");
-  const activityText = document.getElementById("activityText");
-  if (!strip || !activityText) return;
-  activityText.textContent = text;
-  strip.classList.toggle("error", cls === "err");
-  strip.hidden = cls !== "busy" && cls !== "err";
+}
+
+function renderRunProgress(label) {
+  const percent = Math.max(0, Math.min(100, Math.round(runProgress.percent)));
+  activityStrip.hidden = false;
+  if (label) activityText.textContent = label;
+  activityPercent.textContent = `${percent}%`;
+  activityBar.style.width = `${percent}%`;
+  activityTrack.setAttribute("aria-valuenow", String(percent));
+  progressParsed.textContent = `${runProgress.parsed}/${runProgress.total}`;
+  progressFlags.textContent = runProgress.flags == null ? "Pending" : String(runProgress.flags);
+  progressWorkbook.textContent = runProgress.workbook;
+}
+
+function beginRunProgress(total) {
+  Object.assign(runProgress, { total, parsed: 0, flags: null, workbook: "Waiting", percent: 2 });
+  activityStrip.classList.remove("complete", "error");
+  activityStrip.setAttribute("aria-busy", "true");
+  renderRunProgress("Preparing files...");
+}
+
+function updateRunProgress(update, label) {
+  Object.assign(runProgress, update);
+  renderRunProgress(label);
+}
+
+function finishRunProgress(flagCount) {
+  Object.assign(runProgress, {
+    parsed: runProgress.total,
+    flags: flagCount,
+    workbook: "Written",
+    percent: 100,
+  });
+  activityStrip.classList.add("complete");
+  activityStrip.classList.remove("error");
+  activityStrip.setAttribute("aria-busy", "false");
+  renderRunProgress(`Complete - ${runProgress.total} file${runProgress.total === 1 ? "" : "s"} checked`);
+}
+
+function failRunProgress(label, workbook = "Not written") {
+  runProgress.workbook = workbook;
+  activityStrip.classList.add("error");
+  activityStrip.classList.remove("complete");
+  activityStrip.setAttribute("aria-busy", "false");
+  renderRunProgress(label);
+}
+
+function handleEngineProgress(step, detail) {
+  const parsing = detail.match(/Parsing\s+(\d+)\/(\d+):\s*(.*)/i);
+  const banking = step === "BANK" ? detail.match(/^(\d+)\/(\d+)\s+(.*)/) : null;
+  const fileProgress = parsing || banking;
+  if (fileProgress) {
+    const parsed = Number(fileProgress[1]);
+    const total = Number(fileProgress[2]) || runProgress.total;
+    const filename = fileProgress[3];
+    updateRunProgress({
+      parsed,
+      total,
+      percent: 30 + (parsed / total) * 50,
+    }, `Parsing ${parsed} of ${total} - ${filename}`);
+    return;
+  }
+
+  const validation = detail.match(/Validation complete\.\s+(\d+)\s+flagged/i);
+  if (validation) {
+    updateRunProgress({ parsed: runProgress.total, flags: Number(validation[1]), percent: 86 }, "Validation complete");
+  } else if (/Writing workbook/i.test(detail)) {
+    updateRunProgress({ percent: 92, workbook: "Writing" }, "Writing workbook...");
+  } else if (/Workbook written/i.test(detail)) {
+    updateRunProgress({ percent: 98, workbook: "Written" }, "Workbook written");
+  }
 }
 function log(msg) {
   logEl.classList.add("show");
@@ -386,6 +467,7 @@ function startEngineWorker() {
       if (message.type === "progress") {
         const detail = message.detail || message.step || "Working";
         setStatus(`Processing - ${detail}`, "busy");
+        handleEngineProgress(String(message.step || ""), String(message.detail || ""));
         log(`  [${message.step}] ${message.detail || ""}`);
         return;
       }
@@ -469,6 +551,9 @@ async function findScannedFiles() {
   for (let index = 0; index < pickedFiles.length; index += 1) {
     const file = pickedFiles[index];
     setStatus(`Checking text layer ${index + 1}/${pickedFiles.length} - ${displayFileName(file)}`, "busy");
+    updateRunProgress({
+      percent: 4 + ((index + 1) / pickedFiles.length) * 8,
+    }, `Checking file ${index + 1} of ${pickedFiles.length}`);
     const task = pdfjs.getDocument({ data: file.bytes.slice() });
     let pdfDocument = null;
     let page = null;
@@ -499,11 +584,13 @@ async function classifyOcrProbe(text) {
 }
 
 async function recognizePdfPage(pdfDocument, worker, file, pageNo, options = {}) {
-  const { scale = 2, heightRatio = 1, quick = false } = options;
+  const { scale = 2, heightRatio = 1, quick = false, fileIndex = 0, fileCount = 1 } = options;
   if (ocrCancelRequested) throw new OcrCancelledError("OCR stopped by the user.");
   const label = displayFileName(file);
   const step = quick ? "quick first-page check" : `page ${pageNo} of ${pdfDocument.numPages}`;
   setStatus(`Reading ${label} - ${step}`, "busy");
+  const ocrFraction = (fileIndex + ((pageNo - 1) / Math.max(1, pdfDocument.numPages))) / Math.max(1, fileCount);
+  updateRunProgress({ percent: 12 + ocrFraction * 18 }, `OCR ${fileIndex + 1} of ${fileCount} - ${step}`);
   log(`  [OCR] ${label}: ${quick ? "quick page 1 check" : `page ${pageNo}/${pdfDocument.numPages}`}`);
 
   const page = await pdfDocument.getPage(pageNo);
@@ -555,12 +642,17 @@ async function runLocalOcr(files) {
           scale: 2,
           heightRatio: 0.35,
           quick: true,
+          fileIndex: index,
+          fileCount: files.length,
         });
         let firstPageText = quickText;
         let probe = await classifyOcrProbe(quickText);
         let identifyOnly = probe.accepted && probe.ocr_policy === "identify_then_skip";
         if (!identifyOnly) {
-          firstPageText = await recognizePdfPage(pdfDocument, worker, file, 1);
+          firstPageText = await recognizePdfPage(pdfDocument, worker, file, 1, {
+            fileIndex: index,
+            fileCount: files.length,
+          });
           probe = await classifyOcrProbe(firstPageText);
           identifyOnly = probe.accepted && probe.ocr_policy === "identify_then_skip";
         }
@@ -570,7 +662,10 @@ async function runLocalOcr(files) {
           log(`  [OCR] Scanned Shipping Bill identified from page 1; skipped ${skipped} remaining page(s).`);
         } else {
           for (let pageNo = 2; pageNo <= pdfDocument.numPages; pageNo += 1) {
-            pageText.push(await recognizePdfPage(pdfDocument, worker, file, pageNo));
+            pageText.push(await recognizePdfPage(pdfDocument, worker, file, pageNo, {
+              fileIndex: index,
+              fileCount: files.length,
+            }));
           }
         }
       } finally {
@@ -579,9 +674,11 @@ async function runLocalOcr(files) {
       const text = pageText.join("\f").trim();
       if (text.length < 20) {
         log(`  [OCR] No usable text found: ${displayFileName(file)}`);
+        updateRunProgress({ percent: 12 + ((index + 1) / files.length) * 18 }, `OCR ${index + 1} of ${files.length} complete`);
         continue;
       }
       ocrSidecars.set(file.name, text);
+      updateRunProgress({ percent: 12 + ((index + 1) / files.length) * 18 }, `OCR ${index + 1} of ${files.length} complete`);
     }
   } finally {
     if (activeOcrWorker === worker) activeOcrWorker = null;
@@ -659,6 +756,7 @@ runBtn.addEventListener("click", async () => {
   resultsEl.innerHTML = "";
   logEl.textContent = "";
   ocrSidecars = new Map();
+  beginRunProgress(pickedFiles.length);
   setStatus("Processing…", "busy");
 
   try {
@@ -695,10 +793,16 @@ runBtn.addEventListener("click", async () => {
       File: e.File, Type: e.Error_Type, Message: e.Message, Action: e.Action,
     }));
     reviews        = result.reviews || [];
+    const flaggedCount = consolidated.filter((row) => row.Status !== "OK").length + parseErrors.length;
 
     // one Excel workbook — the sole deliverable
     if (result.workbook && workerResult.workbookBytes) {
-      addWorkbookResult(new Uint8Array(workerResult.workbookBytes), result.workbook_name || "Statutory_Returns.xlsx", consolidated.length);
+      addWorkbookResult(
+        new Uint8Array(workerResult.workbookBytes),
+        result.workbook_name || "Statutory_Returns.xlsx",
+        consolidated.length,
+        flaggedCount,
+      );
     }
 
     // tag each picked file with its detected head / kind / outcome
@@ -715,6 +819,7 @@ runBtn.addEventListener("click", async () => {
     renderReviews();
 
     resultsEl.classList.add("show");
+    finishRunProgress(flaggedCount);
     setStatus(`Done — ${pickedFiles.length} PDF(s) processed, ${consolidated.length} record(s), workbook ready.`, "ok");
     log("COMPLETE.");
     // reveal the Results tab and take the user straight to it
@@ -729,9 +834,11 @@ runBtn.addEventListener("click", async () => {
   } catch (e) {
     const reason = e instanceof Error ? e.message : String(e);
     if (e instanceof OcrCancelledError) {
+      failRunProgress("OCR stopped", "Not written");
       setStatus("OCR stopped. No partial results were used.", "");
       log("OCR STOPPED:\n" + reason);
     } else {
+      failRunProgress("Processing stopped", "Not written");
       setStatus("Processing stopped. See details below.", "err");
       log("ERROR:\n" + reason);
       console.error(e);
@@ -751,6 +858,11 @@ const period = (r) => {
   const d = (r.PeriodDate || "").slice(0, 7);
   return d && d !== "nan" ? d : (r.MonthName && r.MonthName !== "Unknown" ? r.MonthName : "—");
 };
+function tableHeaders(headers, numericColumns = []) {
+  const numeric = new Set(numericColumns);
+  return headers.map((header, index) =>
+    `<th${numeric.has(index) ? ' class="num"' : ""}>${header}</th>`).join("");
+}
 
 function renderDashboard() {
   const n = consolidated.length;
@@ -811,7 +923,7 @@ function dashTableHTML() {
       <td class="num err">${d.Errors}</td>
       <td class="num">${d.Periods}</td>
       <td class="num">${money(d.TotalAmount)}</td></tr>`).join("");
-  return `<table class="tbl"><thead><tr>${head.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table>`;
+  return `<table class="tbl"><thead><tr>${tableHeaders(head, [3, 4, 5, 6, 7, 8])}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
 const STATUS_RANK = { Error: 0, Review: 1, OK: 2 };
@@ -876,7 +988,7 @@ function renderRecords() {
       <td class="ell src" title="${esc(r.SourceFile)}">${esc(r.SourceFile)}</td></tr>`;
   }).join("");
   document.getElementById("recTable").innerHTML =
-    `<table class="tbl rec"><thead><tr>${head.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table>`;
+    `<table class="tbl rec"><thead><tr>${tableHeaders(head, [7, 8])}</tr></thead><tbody>${body}</tbody></table>`;
 
   document.querySelectorAll(".evidence-btn").forEach((button) => {
     button.addEventListener("click", () => {
@@ -969,7 +1081,7 @@ function renderReconciliation() {
         <td><span class="pill ${cls}">${esc(row.Status)}</span></td></tr>`;
     }).join("");
     el.innerHTML =
-      `<table class="tbl"><thead><tr>${head.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table>`;
+      `<table class="tbl"><thead><tr>${tableHeaders(head, [2, 3, 4, 5, 6, 7])}</tr></thead><tbody>${body}</tbody></table>`;
     return;
   }
 
@@ -997,7 +1109,7 @@ function renderReconciliation() {
       <td><span class="pill ${cls}">${esc(r.Status)}</span></td></tr>`;
   }).join("");
   el.innerHTML =
-    `<table class="tbl"><thead><tr>${head.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table>`;
+    `<table class="tbl"><thead><tr>${tableHeaders(head, [2, 3, 4, 5, 6])}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
 document.getElementById("flaggedOnly").addEventListener("change", renderRecords);
@@ -1005,14 +1117,14 @@ document.getElementById("flaggedOnly").addEventListener("change", renderRecords)
   document.getElementById(id).addEventListener("change", renderRecords);
 });
 
-function addWorkbookResult(bytes, name, recordCount) {
+function addWorkbookResult(bytes, name, recordCount, flaggedCount) {
   const filename = stampName(name);
   const url = URL.createObjectURL(new Blob([bytes],
     { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
   exportWorkbook.href = url;
   exportWorkbook.download = filename;
   exportWorkbook.setAttribute("aria-disabled", "false");
-  resultsEl.innerHTML = `<div class="result-ready"><span>All files processed - workbook ready</span><span>${esc(filename)} · ${fmtSize(bytes.length)} · ${recordCount} record${recordCount === 1 ? "" : "s"}</span></div>`;
+  resultsEl.innerHTML = `<div class="result-ready"><span>All files processed - workbook written</span><span>${recordCount} parsed · ${flaggedCount} flagged · ${esc(filename)} · ${fmtSize(bytes.length)}</span></div>`;
 }
 
 boot();

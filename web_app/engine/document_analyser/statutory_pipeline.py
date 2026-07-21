@@ -573,6 +573,9 @@ def run_unified_pipeline(
         ).reset_index()
 
     # ── Write ONE Excel workbook (all sheets) — the sole deliverable ──
+    flagged_count = sum(record.get("Status") != "OK" for record in records) + len(errors)
+    log("3", f"Validation complete. {flagged_count} flagged.")
+    log("4", "Writing workbook...")
     workbook_name = "Statutory_Returns.xlsx"
     path_xlsx = os.path.join(output_dir, workbook_name)
     with pd.ExcelWriter(path_xlsx, engine="xlsxwriter") as xw:
@@ -605,6 +608,8 @@ def run_unified_pipeline(
         if df_all.empty and not errors and not sb_items:
             xw.book.add_worksheet("Empty")
 
+    log("5", "Workbook written.")
+
     reviews = []
     for record in records:
         if record.get("Status") == "OK":
@@ -622,7 +627,7 @@ def run_unified_pipeline(
             "Evidence": [row for row in evidence_rows if row.get("SourceFile") == source],
         })
 
-    log("3", f"Pipeline complete. {len(records)} records, {len(errors)} errors.")
+    log("6", f"Pipeline complete. {len(records)} records, {len(errors)} errors.")
     return {
         "workbook":       path_xlsx,
         "workbook_name":  workbook_name,
