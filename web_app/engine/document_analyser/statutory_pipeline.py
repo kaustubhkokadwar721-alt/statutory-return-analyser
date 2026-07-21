@@ -213,7 +213,7 @@ def run_unified_pipeline(
     records = []          # unified contract rows
     errors  = []          # failed files
     audit_contexts = {}   # source file -> (preflight, classification), current run only
-    raw_details = {k: [] for k in ("GSTR1", "GSTR3B", "ESIC", "PF", "PTRC", "TDS", "SB", "EBRC", "EWB")}
+    raw_details = {k: [] for k in ("GSTR1", "ESIC", "PF", "PTRC", "TDS", "SB", "EBRC", "EWB")}
     gstr3b_analysis = []
     sb_items = []         # shipping-bill line items (separate ledger)
     sb_invoice_summaries = []
@@ -395,20 +395,6 @@ def run_unified_pipeline(
                         "FilingDate":    meta.get("Date_of_ARN", None),
                         "SourceFile":    fname,
                     })
-                    flat = {"SourceFile": fname}
-                    flat.update(meta)
-                    t31 = file_tables.get("Table_3_1")
-                    if t31 is not None:
-                        flat["Output_IGST"] = to_float(t31.get("Integrated tax", pd.Series([0])).sum())
-                        flat["Output_CGST"] = to_float(t31.get("Central tax",    pd.Series([0])).sum())
-                        flat["Output_SGST"] = to_float(t31.get("State/UT tax",   pd.Series([0])).sum())
-                    t4 = file_tables.get("Table_4_ITC")
-                    if t4 is not None:
-                        flat["Net_ITC_IGST"] = to_float(t4.get("Integrated tax", pd.Series([0])).sum())
-                        flat["Net_ITC_CGST"] = to_float(t4.get("Central tax",    pd.Series([0])).sum())
-                        flat["Net_ITC_SGST"] = to_float(t4.get("State/UT tax",   pd.Series([0])).sum())
-                    raw_details["GSTR3B"].append(flat)
-
                 # ── ESIC ──────────────────────────────────────────────────
                 elif return_type == "ESIC":
                     res = parse_esic(parse_pdf, fname)
@@ -611,7 +597,7 @@ def run_unified_pipeline(
             df_gstr3b_analysis = df_gstr3b_analysis.sort_values(
                 ["Return Period", "GSTIN", "Source File"], na_position="last"
             )
-            write_sheet(xw, df_gstr3b_analysis, "GSTR3B_Analysis", sort=False)
+            write_sheet(xw, df_gstr3b_analysis, "GSTR 3B", sort=False)
         for rtype, rlist in raw_details.items():
             if rlist:
                 write_sheet(xw, _detail_df(rlist), rtype, sort=False)

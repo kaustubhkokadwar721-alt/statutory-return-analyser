@@ -23,6 +23,9 @@ let parseErrors    = [];  // files that could not be parsed at all
 let reviews        = [];  // local audit evidence for records needing attention
 let pdfjsPromise    = null;
 let activeMode      = "auto";
+let activeOcrWorker = null;
+let rejectActiveOcr = null;
+let ocrCancelRequested = false;
 
 // ---- dom ----
 const $ = (s) => document.querySelector(s);
@@ -30,6 +33,7 @@ const dot        = $("#dot");
 const statusText = $("#statusText");
 const logEl      = $("#log");
 const runBtn     = $("#run");
+const cancelOcrBtn = $("#cancelOcr");
 const filesEl    = $("#files");
 const dropEl     = $("#drop");
 const picker     = $("#picker");
@@ -398,6 +402,58 @@ async function loadPdfRenderer() {
   return pdfjsPromise;
 }
 
+class OcrCancelledError extends Error {}
+
+const yieldToBrowser = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+async function classifyOcrProbe(text) {
+  if (activeMode !== "auto") return { accepted: false, ocr_policy: "full" };
+  pyodide.globals.set("ocr_probe_text", text);
+  try {
+    const resultJson = await pyodide.runPythonAsync(`
+import web_bootstrap, json
+json.dumps(web_bootstrap.classify_ocr_probe(str(ocr_probe_text)))
+    `);
+    return JSON.parse(resultJson);
+  } finally {
+    pyodide.globals.delete("ocr_probe_text");
+  }
+}
+
+async function recognizePdfPage(pdfDocument, worker, file, pageNo, options = {}) {
+  const { scale = 2, heightRatio = 1, quick = false } = options;
+  if (ocrCancelRequested) throw new OcrCancelledError("OCR stopped by the user.");
+  const label = displayFileName(file);
+  const step = quick ? "quick first-page check" : `page ${pageNo} of ${pdfDocument.numPages}`;
+  setStatus(`Reading ${label} - ${step}`, "busy");
+  log(`  [OCR] ${label}: ${quick ? "quick page 1 check" : `page ${pageNo}/${pdfDocument.numPages}`}`);
+
+  const page = await pdfDocument.getPage(pageNo);
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.ceil(viewport.width);
+  canvas.height = Math.ceil(viewport.height * heightRatio);
+  try {
+    const context = canvas.getContext("2d", { alpha: false });
+    await page.render({ canvasContext: context, viewport, background: "#ffffff" }).promise;
+    if (ocrCancelRequested) throw new OcrCancelledError("OCR stopped by the user.");
+    const cancelPromise = new Promise((_, reject) => { rejectActiveOcr = reject; });
+    let result;
+    try {
+      result = await Promise.race([worker.recognize(canvas), cancelPromise]);
+    } finally {
+      rejectActiveOcr = null;
+    }
+    if (ocrCancelRequested) throw new OcrCancelledError("OCR stopped by the user.");
+    return (result.data.text || "").trim();
+  } finally {
+    canvas.width = 1;
+    canvas.height = 1;
+    page.cleanup();
+    await yieldToBrowser();
+  }
+}
+
 async function runLocalOcr(files) {
   const pdfjs = await loadPdfRenderer();
   const worker = await window.Tesseract.createWorker("eng", 1, {
@@ -408,27 +464,36 @@ async function runLocalOcr(files) {
     cacheMethod: "none",
     workerBlobURL: false,
   });
+  activeOcrWorker = worker;
   try {
     for (let index = 0; index < files.length; index += 1) {
       const file = files[index];
-      log(`  [OCR] ${index + 1}/${files.length}: ${displayFileName(file)}`);
+      log(`  [OCR] File ${index + 1}/${files.length}: ${displayFileName(file)}`);
       const task = pdfjs.getDocument({ data: file.bytes.slice() });
       const pdfDocument = await task.promise;
       const pageText = [];
       try {
-        for (let pageNo = 1; pageNo <= pdfDocument.numPages; pageNo += 1) {
-          const page = await pdfDocument.getPage(pageNo);
-          const viewport = page.getViewport({ scale: 2 });
-          const canvas = document.createElement("canvas");
-          canvas.width = Math.ceil(viewport.width);
-          canvas.height = Math.ceil(viewport.height);
-          const context = canvas.getContext("2d", { alpha: false });
-          await page.render({ canvasContext: context, viewport, background: "#ffffff" }).promise;
-          const result = await worker.recognize(canvas);
-          pageText.push((result.data.text || "").trim());
-          canvas.width = 1;
-          canvas.height = 1;
-          page.cleanup();
+        const quickText = await recognizePdfPage(pdfDocument, worker, file, 1, {
+          scale: 2,
+          heightRatio: 0.35,
+          quick: true,
+        });
+        let firstPageText = quickText;
+        let probe = await classifyOcrProbe(quickText);
+        let identifyOnly = probe.accepted && probe.ocr_policy === "identify_then_skip";
+        if (!identifyOnly) {
+          firstPageText = await recognizePdfPage(pdfDocument, worker, file, 1);
+          probe = await classifyOcrProbe(firstPageText);
+          identifyOnly = probe.accepted && probe.ocr_policy === "identify_then_skip";
+        }
+        pageText.push(firstPageText);
+        if (identifyOnly) {
+          const skipped = Math.max(0, pdfDocument.numPages - 1);
+          log(`  [OCR] Scanned Shipping Bill identified from page 1; skipped ${skipped} remaining page(s).`);
+        } else {
+          for (let pageNo = 2; pageNo <= pdfDocument.numPages; pageNo += 1) {
+            pageText.push(await recognizePdfPage(pdfDocument, worker, file, pageNo));
+          }
         }
       } finally {
         await pdfDocument.destroy();
@@ -441,7 +506,9 @@ async function runLocalOcr(files) {
       pyodide.FS.writeFile(`/work/in/${file.name}.ocr.txt`, new TextEncoder().encode(text));
     }
   } finally {
-    await worker.terminate();
+    if (activeOcrWorker === worker) activeOcrWorker = null;
+    const termination = Promise.resolve(worker.terminate()).catch(() => {});
+    if (!ocrCancelRequested) await termination;
   }
 }
 
@@ -451,22 +518,41 @@ async function ocrScannedFiles(errors) {
   if (!files.length) return;
   if (!window.Tesseract) throw new Error("The local OCR component did not load. Refresh the page and try again.");
 
+  ocrCancelRequested = false;
+  cancelOcrBtn.hidden = false;
+  cancelOcrBtn.disabled = false;
   let lastError;
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    try {
-      await runLocalOcr(files);
-      return;
-    } catch (error) {
-      lastError = error;
-      if (attempt === 1) {
-        pdfjsPromise = null;
-        log("  [OCR] Local OCR did not start. Retrying once...");
+  try {
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        await runLocalOcr(files);
+        return;
+      } catch (error) {
+        if (ocrCancelRequested || error instanceof OcrCancelledError) {
+          throw new OcrCancelledError("OCR stopped by the user.");
+        }
+        lastError = error;
+        if (attempt === 1) {
+          pdfjsPromise = null;
+          log("  [OCR] Local OCR did not start. Retrying once...");
+        }
       }
     }
+  } finally {
+    cancelOcrBtn.hidden = true;
+    cancelOcrBtn.disabled = false;
   }
   const reason = lastError instanceof Error ? lastError.message : String(lastError);
   throw new Error(`Local OCR could not complete after a retry: ${reason}`);
 }
+
+cancelOcrBtn.addEventListener("click", () => {
+  ocrCancelRequested = true;
+  cancelOcrBtn.disabled = true;
+  setStatus("Stopping OCR...", "busy");
+  log("  [OCR] Stop requested. Finishing the current operation...");
+  if (rejectActiveOcr) rejectActiveOcr(new OcrCancelledError("OCR stopped by the user."));
+});
 
 async function runEngine() {
   pyodide.globals.set("run_kind", activeMode);
@@ -554,10 +640,16 @@ for d in ("/work/in", "/work/out"):
     document.getElementById("paneResults").scrollTop = 0;
   } catch (e) {
     const reason = e instanceof Error ? e.message : String(e);
-    setStatus("Processing stopped. See details below.", "err");
-    log("ERROR:\n" + reason);
-    console.error(e);
+    if (e instanceof OcrCancelledError) {
+      setStatus("OCR stopped. No partial results were used.", "");
+      log("OCR STOPPED:\n" + reason);
+    } else {
+      setStatus("Processing stopped. See details below.", "err");
+      log("ERROR:\n" + reason);
+      console.error(e);
+    }
   } finally {
+    cancelOcrBtn.hidden = true;
     runBtn.disabled = false;
     modeButtons.forEach((button) => { button.disabled = false; });
     maybeEnableRun();

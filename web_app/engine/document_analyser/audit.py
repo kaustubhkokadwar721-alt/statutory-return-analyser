@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Callable
 
@@ -14,6 +15,7 @@ class DocumentHandler:
     profile_version: str
     required_fields: tuple[str, ...]
     matcher: Callable[[str], tuple[int, str, list[str]]]
+    ocr_policy: str = "full"
 
 
 def _has(text: str, *markers: str) -> list[str]:
@@ -21,8 +23,19 @@ def _has(text: str, *markers: str) -> list[str]:
 
 
 def _shipping_bill(text: str):
-    hits = _has(text, "INDIAN CUSTOMS EDI SYSTEM", "SHIPPING BILL SUMMARY")
-    return (100 if hits else 0, "Return", hits)
+    strong = _has(text, "INDIAN CUSTOMS EDI SYSTEM", "SHIPPING BILL SUMMARY")
+    ocr_tokens = set(re.findall(r"[A-Z]+", text.translate(str.maketrans({"0": "O", "1": "I"}))))
+    if {"CUSTOMS", "EDI", "SYSTEM"} <= ocr_tokens:
+        strong.append("CUSTOMS + EDI + SYSTEM")
+    if {"SHIPPING", "BILL", "SUMMARY"} <= ocr_tokens:
+        strong.append("SHIPPING + BILL + SUMMARY")
+    supporting = _has(text, "SHIPPING BILL", "IEC/BR", "FOB VALUE",
+                      "PORT OF LOADING", "RODTEP", "RODTP")
+    if strong:
+        return 100, "Return", strong + supporting
+    if "SHIPPING BILL" in supporting and len(supporting) >= 3:
+        return 85, "Return", supporting
+    return 0, "Return", []
 
 
 def _ebrc(text: str):
@@ -82,7 +95,8 @@ def _tds(text: str):
 
 
 HANDLERS = (
-    DocumentHandler("SB", "icegate-v1", ("EntityID", "PeriodDate", "DocRef"), _shipping_bill),
+    DocumentHandler("SB", "icegate-v1", ("EntityID", "PeriodDate", "DocRef"),
+                    _shipping_bill, "identify_then_skip"),
     DocumentHandler("EBRC", "dgft-v1", ("EntityID", "PeriodDate", "DocRef"), _ebrc),
     DocumentHandler("EWB", "eway-v1", ("EntityID", "PeriodDate", "DocRef"), _ewb),
     DocumentHandler("GSTR3B", "gst-3b-v1", ("EntityID", "PeriodDate"), _gstr3b),

@@ -38,7 +38,7 @@ Drop any mix of the seven document types. The engine detects each one and produc
 | **All_Returns_Consolidated.csv** | Every return on one normalized schema — pivot / SUMIFS ready |
 | **Dashboard_Summary.csv** | Filing counts, pass rates, and totals grouped by return type and FY |
 | **`<type>`_Details.csv** | Full parsed fields per return type |
-| **GSTR3B_Analysis** | One row per return with outward supplies, RCM, ITC, credit utilisation, payable tax, interest, late fees, and source traceability |
+| **GSTR 3B** | One row per return with outward supplies, RCM, ITC, credit utilisation, payable tax, interest, late fees, and source traceability |
 | **SB_Items.csv** | Shipping-bill line items — HS code, description, quantity, rate, FOB — one row per item across all bills |
 
 Each row carries a **Status** (OK / Review / Error), the **Flags** that triggered it, the
@@ -54,6 +54,10 @@ values, and drawback & RODTEP claims against their per-item rows — so a bill o
 shows **OK** when its own arithmetic ties out. Scanned (image-only) shipping bills are
 skipped, even after local OCR identifies them, because their tables and claim values
 cannot be verified safely.
+
+For image-only PDFs, OCR starts with page one. If that probe confidently identifies
+a Shipping Bill, the remaining pages are skipped immediately. Other document types
+continue through full local OCR, using the already-read first page.
 
 ## Design
 

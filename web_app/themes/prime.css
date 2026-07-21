@@ -406,6 +406,15 @@ body {
 .btn:active:not(:disabled) { transform: translateY(0); }
 .btn:focus-visible { outline: 2px solid var(--seal); outline-offset: 3px; }
 .btn:disabled { opacity: .35; cursor: not-allowed; }
+.cancel-ocr {
+  padding: 12px 18px; color: var(--red); background: var(--panel);
+  border: 1px solid color-mix(in oklch, var(--red) 42%, var(--rule));
+  box-shadow: none;
+}
+.cancel-ocr svg { fill: none; stroke: currentColor; stroke-width: 2; }
+.cancel-ocr:hover:not(:disabled) {
+  color: var(--panel); background: var(--red); box-shadow: var(--shadow-sm);
+}
 .run-hint { font-size: 12px; color: var(--ink-faint); }
 .log {
   display: none; font-family: ui-monospace, 'Cascadia Code', Menlo, monospace; font-size: 12px;

@@ -1,6 +1,25 @@
 """Browser entry point for the unified parser running under Pyodide."""
 
 
+def classify_ocr_probe(text):
+    """Return a JSON-safe first-page classification for staged browser OCR."""
+    from document_analyser.audit import classify_document
+
+    result = classify_document(text)
+    winner = result.get("winner")
+    if not winner:
+        return {"accepted": False, "return_type": None, "ocr_policy": "full",
+                "score": 0, "markers": []}
+    return {
+        "accepted": bool(result.get("accepted")),
+        "return_type": winner["return_type"],
+        "doc_kind": winner["doc_kind"],
+        "ocr_policy": winner["handler"].ocr_policy,
+        "score": winner["score"],
+        "markers": winner["markers"],
+    }
+
+
 def run(kind, input_dir, output_dir, progress_cb=None):
     """Run the local parser and return workbook metadata and review evidence."""
     if kind in {"bank", "bank_statement", "banking"}:

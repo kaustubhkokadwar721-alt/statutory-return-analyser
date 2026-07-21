@@ -107,6 +107,9 @@
     <symbol id="i-play" viewBox="0 0 24 24">
       <path d="M8 5.5v13l10-6.5z"/>
     </symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24">
+      <rect x="6.5" y="6.5" width="11" height="11" rx="1"/>
+    </symbol>
   </defs>
 </svg>
 
@@ -191,6 +194,10 @@
         <button class="btn" id="run" disabled>
           <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-play"/></svg>
           Run and Report
+        </button>
+        <button class="btn cancel-ocr" id="cancelOcr" type="button" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-stop"/></svg>
+          Stop OCR
         </button>
         <label class="ocr-toggle" title="Runs the bundled OCR engine in this browser only. Scanned Shipping Bills are skipped because their tables and claim values cannot be verified safely.">
           <input type="checkbox" id="ocrEnabled" checked> OCR scanned PDFs
