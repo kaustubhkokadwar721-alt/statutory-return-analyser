@@ -65,7 +65,7 @@ These files own the web interface:
 
 | Resource | Responsibility |
 | --- | --- |
-| `web_app/themes/prime.css` | Design tokens, layout, component appearance, responsive rules |
+| `web_app/themes/workspace.css` | Design tokens, layout, component appearance, responsive rules |
 | `web_app/index.html` | Semantic structure, labels, icon sprite, accessibility attributes |
 | `web_app/app.js` | Component states, dynamic content, status messages, result rendering |
 | `web_app/fonts/` | Offline Spectral and Hanken Grotesk font files |
@@ -74,7 +74,7 @@ These files own the web interface:
 
 Rules:
 
-- Do not create a second stylesheet for a feature. Extend `prime.css` in the section
+- Do not create a second stylesheet for a feature. Extend `workspace.css` in the section
   that owns the component.
 - Do not add an icon package. Reuse or add a symbol to the SVG sprite in `index.html`.
 - Do not fetch fonts, icons, scripts, analytics, or images from a third party.

@@ -61,7 +61,7 @@ continue through full local OCR, using the already-read first page.
 
 ## Design
 
-A single premium theme (`themes/prime.css`): a calm, institutional layout with a
+A single premium theme (`themes/workspace.css`): a calm, institutional layout with a
 financial serif (Spectral) for headings and a humanist sans (Hanken Grotesk) for data,
 with saturated colour reserved for status. All fonts are vendored, so it works offline.
 
@@ -132,7 +132,7 @@ web_app/             # the browser app (deployed to Pages)
   index.html         #   UI (+ noscript / old-browser guards)
   app.js             #   Pyodide glue (boot, diagnostics, run, render, download)
   sw.js              #   service worker — offline cache of the runtime
-  themes/prime.css   #   the theme
+  themes/workspace.css # the theme
   fonts/             #   vendored woff2 (Spectral + Hanken Grotesk)
   pyodide/  wheels/  #   vendored runtime + Python wheels
   engine/            #   maintained parser package, zipped to engine.zip

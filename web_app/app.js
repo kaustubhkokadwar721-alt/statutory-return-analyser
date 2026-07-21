@@ -39,12 +39,20 @@ const dropEl     = $("#drop");
 const picker     = $("#picker");
 const resultsEl  = $("#results");
 const resultsTab = $("#tabResults");
+const reconcileTab = $("#tabReconcile");
+const exportWorkbook = $("#exportWorkbook");
 const ocrEnabled = $("#ocrEnabled");
 const modeButtons = [...document.querySelectorAll(".mode-btn")];
 
 function setStatus(text, cls) {
   statusText.textContent = text;
   dot.className = "dot " + (cls || "");
+  const strip = document.getElementById("activityStrip");
+  const activityText = document.getElementById("activityText");
+  if (!strip || !activityText) return;
+  activityText.textContent = text;
+  strip.classList.toggle("error", cls === "err");
+  strip.hidden = cls !== "busy" && cls !== "err";
 }
 function log(msg) {
   logEl.classList.add("show");
@@ -65,6 +73,7 @@ function maybeEnableRun() {
 const TABS = [
   { tab: $("#tabDrop"),    pane: $("#paneDrop") },
   { tab: $("#tabResults"), pane: $("#paneResults") },
+  { tab: $("#tabReconcile"), pane: $("#paneReconcile") },
 ];
 function selectTab(idx) {
   TABS.forEach(({ tab, pane }, i) => {
@@ -142,6 +151,10 @@ function setMode(mode) {
   fileTags = {};
   consolidated = []; dashboard = []; reconciliation = []; parseErrors = []; reviews = [];
   resultsTab.hidden = true;
+  reconcileTab.hidden = true;
+  exportWorkbook.removeAttribute("href");
+  exportWorkbook.removeAttribute("download");
+  exportWorkbook.setAttribute("aria-disabled", "true");
   renderFiles();
   selectTab(0);
 }
@@ -184,8 +197,12 @@ function removeFile(name) {
 function renderFiles() {
   const bar = document.getElementById("filesBar");
   const chips = document.getElementById("fileChips");
+  const runLabel = document.getElementById("runLabel");
 
-  document.querySelector(".drop-card").classList.toggle("has-files", pickedFiles.length > 0);
+  document.getElementById("paneDrop").classList.toggle("has-files", pickedFiles.length > 0);
+  runLabel.textContent = pickedFiles.length
+    ? `Run ${pickedFiles.length} file${pickedFiles.length === 1 ? "" : "s"}`
+    : "Run files";
 
   if (!pickedFiles.length) {
     bar.innerHTML = "";
@@ -227,19 +244,22 @@ function renderFiles() {
     const tag = fileTags[f.name];
     const div = document.createElement("div");
     div.className = "f";
-    let tagHtml = "";
+    let tagHtml = '<span class="ftag">Auto</span>';
+    let statusHtml = '<span class="file-status">Queued</span>';
     if (tag) {
       if (tag.status === "unreadable") {
-        tagHtml = `<span class="ftag err">unreadable</span>`;
+        tagHtml = '<span class="ftag err">Unknown</span>';
+        statusHtml = '<span class="file-status review">Needs review</span>';
       } else {
         const m = TYPE_META[tag.type];
         const ic = m ? `<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#${m.icon}"/></svg>` : "";
-        tagHtml = `<span class="ftag ${m ? m.cls : ""}">${ic}${esc(m ? m.label : tag.type)}</span>` +
-                  (tag.status !== "OK" ? `<span class="pill ${(tag.status || "").toLowerCase()}">${esc(tag.status)}</span>` : "");
+        tagHtml = `<span class="ftag ${m ? m.cls : ""}">${ic}${esc(m ? m.label : tag.type)}</span>`;
+        const statusClass = tag.status === "OK" ? "ok" : "review";
+        statusHtml = `<span class="file-status ${statusClass}">${tag.status === "OK" ? "Parsed" : esc(tag.status)}</span>`;
       }
     }
     div.innerHTML =
-      `<span class="nm" title="${esc(displayFileName(f))}">${esc(displayFileName(f))}</span>${tagHtml}` +
+      `<span class="nm" title="${esc(displayFileName(f))}">${esc(displayFileName(f))}</span>${tagHtml}${statusHtml}` +
       `<span class="sz">${fmtSize(f.bytes.length)}</span>` +
       `<button type="button" class="rm" aria-label="Remove ${esc(displayFileName(f))}">&times;</button>`;
     div.querySelector(".rm").addEventListener("click", () => removeFile(f.name));
@@ -257,6 +277,22 @@ picker.addEventListener("change", (e) => addFiles(e.target.files));
 ["dragleave", "drop"].forEach((ev) =>
   dropEl.addEventListener(ev, (e) => { e.preventDefault(); dropEl.classList.remove("over"); }));
 dropEl.addEventListener("drop", (e) => addFiles(e.dataTransfer.files));
+document.getElementById("addFiles").addEventListener("click", () => picker.click());
+
+const privacyDialog = document.getElementById("privacyDialog");
+document.getElementById("privacyOpen").addEventListener("click", () => privacyDialog.showModal());
+document.getElementById("privacyClose").addEventListener("click", () => privacyDialog.close());
+privacyDialog.addEventListener("click", (event) => {
+  if (event.target === privacyDialog) privacyDialog.close();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.altKey || event.ctrlKey || event.metaKey || /INPUT|SELECT|TEXTAREA/.test(event.target.tagName)) return;
+  const index = Number(event.key) - 1;
+  if (index < 0 || index >= TABS.length || TABS[index].tab.hidden) return;
+  selectTab(index);
+  TABS[index].tab.focus();
+});
 
 // ---- boot diagnostics: a visible ✔/⏳/✖ checklist so a failed boot on an
 // unfamiliar machine says exactly which stage died, not just "something broke" ----
@@ -571,7 +607,10 @@ runBtn.addEventListener("click", async () => {
   consolidated = []; dashboard = []; reconciliation = []; parseErrors = []; reviews = [];
   resultsEl.classList.remove("show");
   // release blob URLs from the previous run before discarding the buttons
-  resultsEl.querySelectorAll("a[href^='blob:']").forEach((a) => URL.revokeObjectURL(a.href));
+  if (exportWorkbook.href.startsWith("blob:")) URL.revokeObjectURL(exportWorkbook.href);
+  exportWorkbook.removeAttribute("href");
+  exportWorkbook.removeAttribute("download");
+  exportWorkbook.setAttribute("aria-disabled", "true");
   resultsEl.innerHTML = "";
   logEl.textContent = "";
   setStatus("Processing…", "busy");
@@ -635,7 +674,11 @@ for d in ("/work/in", "/work/out"):
     log("COMPLETE.");
     // reveal the Results tab and take the user straight to it
     resultsTab.hidden = false;
+    reconcileTab.hidden = false;
     document.getElementById("tabResultsN").textContent = String(consolidated.length);
+    document.getElementById("tabReconcileN").textContent = String(
+      reconciliation.filter((row) => !["Matched", "PASS"].includes(row.Status)).length
+    );
     selectTab(1);
     document.getElementById("paneResults").scrollTop = 0;
   } catch (e) {
@@ -848,9 +891,16 @@ function renderReviews() {
 function renderReconciliation() {
   const el = document.getElementById("reconTable");
   const sec = document.getElementById("reconSec");
+  const empty = document.getElementById("reconEmpty");
   if (!el || !sec) return;
-  if (!reconciliation.length) { sec.hidden = true; el.innerHTML = ""; return; }
+  if (!reconciliation.length) {
+    sec.hidden = true;
+    empty.hidden = false;
+    el.innerHTML = "";
+    return;
+  }
   sec.hidden = false;
+  empty.hidden = true;
 
   if (activeMode === "bank") {
     const rows = reconciliation.slice().sort((a, b) =>
@@ -914,23 +964,10 @@ function addWorkbookResult(bytes, name, recordCount) {
   const filename = stampName(name);
   const url = URL.createObjectURL(new Blob([bytes],
     { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
-
-  const div = document.createElement("div");
-  div.className = "dl dl-all";
-  const workbookContents = activeMode === "bank"
-    ? "transactions, deposits, balance checks and review findings"
-    : "every ledger, dashboard and reconciliation";
-  div.innerHTML =
-    `<span class="dl-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-csv"/></svg></span>` +
-    `<div class="n">Workbook<span class="s">${esc(filename)} · ${fmtSize(bytes.length)} — ${esc(workbookContents)} in one Excel file</span></div>`;
-
-  const a = document.createElement("a");
-  a.className = "btn";
-  a.href = url;
-  a.download = filename;
-  a.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-download"/></svg>Download Excel`;
-  div.appendChild(a);
-  resultsEl.appendChild(div);
+  exportWorkbook.href = url;
+  exportWorkbook.download = filename;
+  exportWorkbook.setAttribute("aria-disabled", "false");
+  resultsEl.innerHTML = `<div class="result-ready"><span>All files processed - workbook ready</span><span>${esc(filename)} · ${fmtSize(bytes.length)} · ${recordCount} record${recordCount === 1 ? "" : "s"}</span></div>`;
 }
 
 boot();

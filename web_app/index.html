@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Statutory Return Extractor</title>
 <meta name="description" content="Parse GSTR-1, GSTR-3B, TDS, PF, ESIC, PTRC and ICEGATE Shipping Bill PDFs into clean, verified CSV ledgers, entirely in your browser.">
-<link rel="stylesheet" href="themes/prime.css">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="themes/workspace.css">
 </head>
 <body>
 
@@ -113,144 +114,174 @@
   </defs>
 </svg>
 
-<div class="edge" aria-hidden="true"></div>
-
-<!-- ===== Top bar: brand + status + offline pledge, one slim row ===== -->
-<header class="topbar">
-  <div class="wrap topbar-in">
+<div class="app-shell">
+  <aside class="sidebar">
     <div class="brand">
-      <span class="mark"><svg viewBox="0 0 24 24"><use href="#i-logo"/></svg></span>
-      <div class="brand-txt">
-        <h1 class="title">Statutory Return <em>Extractor</em></h1>
-        <div class="eyebrow">For audit working papers</div>
+      <span class="mark" aria-hidden="true">Rx</span>
+      <div>
+        <h1 class="title">Extractor</h1>
+        <span class="brand-sub">Statutory returns</span>
       </div>
     </div>
-    <div class="statusbar">
-      <span class="dot busy" id="dot"></span>
-      <span id="statusText">Loading engine…</span>
-    </div>
-    <div class="pledge-mini" title="Files never leave this device. No upload, no server, no network - every PDF is parsed in this browser via Python compiled to WebAssembly. Open DevTools → Network and watch it stay empty.">
-      <span class="stamp" aria-hidden="true">
-        <svg viewBox="0 0 24 24"><use href="#i-logo"/></svg>
-      </span>
-      <span class="pledge-txt">
-        <b>Private by design</b>
-        <span>Files stay on this device</span>
-      </span>
-    </div>
-  </div>
-</header>
 
-<div class="wrap main-wrap">
+    <nav class="tabs" role="tablist" aria-label="Workspace">
+      <button type="button" class="tab" id="tabDrop" role="tab" aria-selected="true" aria-controls="paneDrop">
+        <span>Extract</span><kbd>1</kbd>
+      </button>
+      <button type="button" class="tab" id="tabResults" role="tab" aria-selected="false" aria-controls="paneResults" tabindex="-1" hidden>
+        <span>Results</span><span class="tab-n" id="tabResultsN"></span>
+      </button>
+      <button type="button" class="tab" id="tabReconcile" role="tab" aria-selected="false" aria-controls="paneReconcile" tabindex="-1" hidden>
+        <span>Reconcile</span><span class="tab-n attention" id="tabReconcileN"></span>
+      </button>
+    </nav>
 
-  <!-- ===== Documents ===== -->
-  <section class="sec-main" data-sec="documents">
-    <div class="card drop-card">
-
-      <div class="tabs" role="tablist" aria-label="Workspace">
-        <button type="button" class="tab" id="tabDrop" role="tab" aria-selected="true" aria-controls="paneDrop">Drop &amp; parse</button>
-        <button type="button" class="tab" id="tabResults" role="tab" aria-selected="false" aria-controls="paneResults" tabindex="-1" hidden>Results<span class="tab-n" id="tabResultsN"></span></button>
+    <section class="engine-card" aria-live="polite">
+      <div class="engine-summary">
+        <span class="dot busy" id="dot"></span>
+        <strong>Local engine</strong>
       </div>
-
-      <div class="pane active" id="paneDrop" role="tabpanel" aria-labelledby="tabDrop">
-
+      <div class="engine-status" id="statusText">Loading engine...</div>
       <ol id="bootDiag" class="diag" hidden></ol>
+    </section>
+
+    <button class="privacy-card" id="privacyOpen" type="button" aria-haspopup="dialog">
+      <span class="privacy-label"><span class="privacy-dot"></span>Private by design</span>
+      <span>Your files are read on this computer and nowhere else.</span>
+      <span class="privacy-link">How does that work?</span>
+    </button>
+
+    <div class="offline-note"><span class="dot ok"></span>Offline after first load</div>
+  </aside>
+
+  <main class="workspace">
+    <section class="pane active" id="paneDrop" role="tabpanel" aria-labelledby="tabDrop">
+      <header class="view-header">
+        <div>
+          <h2>Extract</h2>
+          <p>Add PDFs, then run the local analyser.</p>
+        </div>
+        <div class="view-actions">
+          <label class="ocr-toggle" title="Runs OCR on this device. Scanned Shipping Bills are identified and skipped because their detailed values cannot be verified safely.">
+            <input type="checkbox" id="ocrEnabled" checked> OCR scanned PDFs
+          </label>
+          <button class="btn secondary" id="addFiles" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-upload"/></svg>Add files
+          </button>
+          <button class="btn primary" id="run" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-play"/></svg><span id="runLabel">Run files</span>
+          </button>
+          <button class="btn secondary cancel-ocr" id="cancelOcr" type="button" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-stop"/></svg>Stop OCR
+          </button>
+          <button class="btn secondary" type="button" disabled title="Available after parsing">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-download"/></svg>Export
+          </button>
+        </div>
+      </header>
+
+      <div class="activity-strip" id="activityStrip" hidden>
+        <span id="activityText">Working...</span>
+        <span class="activity-track" aria-hidden="true"><span></span></span>
+      </div>
 
       <div class="mode-switch" role="radiogroup" aria-label="Choose document family">
         <button type="button" class="mode-btn active" data-mode="auto" role="radio" aria-checked="true">Statutory returns</button>
         <button type="button" class="mode-btn" data-mode="bank" role="radio" aria-checked="false">Bank &amp; FD statements</button>
       </div>
 
-      <ul class="types" id="statutoryTypes" aria-label="Statutory document types handled">
-        <li class="type t-gstr1"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-gstr1"/></svg></span><b>GSTR-1</b><i>Outward supplies</i></li>
-        <li class="type t-gstr3b"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-gstr3b"/></svg></span><b>GSTR-3B</b><i>Monthly summary</i></li>
-        <li class="type t-tds"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-tds"/></svg></span><b>TDS</b><i>Challan 281</i></li>
-        <li class="type t-pf"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-pf"/></svg></span><b>PF ECR</b><i>EPFO challan</i></li>
-        <li class="type t-esic"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-esic"/></svg></span><b>ESIC</b><i>Challan</i></li>
-        <li class="type t-ptrc"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-ptrc"/></svg></span><b>PTRC</b><i>Form IIIB</i></li>
-        <li class="type t-sb"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-sb"/></svg></span><b>Shipping Bill</b><i>ICEGATE export</i></li>
-        <li class="type t-ebrc"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-ebrc"/></svg></span><b>eBRC</b><i>DGFT realisation</i></li>
-        <li class="type t-ewb"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-ewb"/></svg></span><b>e-Way Bill</b><i>GST transit</i></li>
-      </ul>
-
-      <ul class="types banking-types" id="bankingTypes" aria-label="Bank document types handled" hidden>
-        <li class="type t-bank"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-bank"/></svg></span><b>Bank Statement</b><i>Current &amp; savings</i></li>
-        <li class="type t-loan"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-bank"/></svg></span><b>Loan &amp; CC</b><i>PCFC and cash credit</i></li>
-        <li class="type t-fd"><span class="tplate"><svg viewBox="0 0 24 24"><use href="#i-fd"/></svg></span><b>Fixed Deposits</b><i>Balance &amp; interest</i></li>
-      </ul>
+      <div class="supported-row">
+        <span class="supported-label">Supported</span>
+        <ul class="types" id="statutoryTypes" aria-label="Statutory document types handled">
+          <li class="type">GSTR-1</li><li class="type">GSTR-3B</li><li class="type">TDS</li>
+          <li class="type">PF ECR</li><li class="type">ESIC</li><li class="type">PTRC</li>
+          <li class="type">Shipping Bill</li><li class="type">eBRC</li><li class="type">e-Way Bill</li>
+        </ul>
+        <ul class="types" id="bankingTypes" aria-label="Bank document types handled" hidden>
+          <li class="type">Bank statement</li><li class="type">Loan &amp; CC</li><li class="type">Fixed deposits</li>
+        </ul>
+      </div>
 
       <div id="drop" class="drop" role="button" tabindex="0" aria-label="Drop PDFs here or press Enter to browse">
         <span class="drop-ic"><svg viewBox="0 0 24 24"><use href="#i-upload"/></svg></span>
         <div class="drop-big">Drop PDFs here</div>
-        <div class="drop-small" id="dropHelp">any mix of the nine types · or click to browse</div>
+        <div class="drop-small" id="dropHelp">any mix of the nine types, or click to browse</div>
         <input type="file" id="picker" accept="application/pdf" multiple hidden>
       </div>
 
-      <div id="filesBar" class="files-bar"></div>
+      <div class="queue-head" id="filesBar"></div>
       <div id="fileChips" class="fchips"></div>
-      <div id="files" class="files"></div>
-
-      <div class="run-row">
-        <button class="btn" id="run" disabled>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-play"/></svg>
-          Run and Report
-        </button>
-        <button class="btn cancel-ocr" id="cancelOcr" type="button" hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-stop"/></svg>
-          Stop OCR
-        </button>
-        <label class="ocr-toggle" title="Runs the bundled OCR engine in this browser only. Scanned Shipping Bills are skipped because their tables and claim values cannot be verified safely.">
-          <input type="checkbox" id="ocrEnabled" checked> OCR scanned PDFs
-        </label>
-        <span class="run-hint" id="runHint">Auto-detects each document’s type</span>
+      <div class="files-table" id="filesTable">
+        <div class="files-columns"><span>File</span><span>Type</span><span>Status</span><span>Size</span><span></span></div>
+        <div id="files" class="files"></div>
       </div>
+      <span class="run-hint" id="runHint">Auto-detects each document's type</span>
       <div id="log" class="log"></div>
+    </section>
 
-      </div><!-- /paneDrop -->
+    <section class="pane pane-results" id="paneResults" role="tabpanel" aria-labelledby="tabResults" hidden>
+      <header class="view-header">
+        <div><h2>Results</h2><p>Review the ledger before exporting the workbook.</p></div>
+        <a class="btn primary export-link" id="exportWorkbook" aria-disabled="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-download"/></svg>Export workbook
+        </a>
+      </header>
 
-      <div class="pane pane-results" id="paneResults" role="tabpanel" aria-labelledby="tabResults" hidden>
+      <div id="results" class="results"></div>
+      <div id="kpis" class="kpis"></div>
 
-        <div class="rsec">
-          <div class="rsec-head">Download</div>
-          <div id="results" class="results"></div>
+      <section class="rsec">
+        <div class="rsec-head">Overview</div>
+        <div id="dashTable" class="tbl-wrap table-frame"></div>
+      </section>
+
+      <section class="rsec" id="reviewSec" hidden>
+        <div class="rsec-head">Review evidence</div>
+        <div id="reviewDetails" class="review-list"></div>
+      </section>
+
+      <section class="rsec">
+        <div class="rsec-head records-head">
+          <span>Records</span><span class="count" id="recCount" aria-live="polite"></span>
+          <label class="record-filter"><select id="filterType" aria-label="Filter by return type"><option value="">All types</option></select></label>
+          <label class="record-filter"><select id="filterFY" aria-label="Filter by financial year"><option value="">All years</option></select></label>
+          <label class="record-filter"><select id="filterStatus" aria-label="Filter by status"><option value="">All states</option></select></label>
+          <label class="flagtoggle"><input type="checkbox" id="flaggedOnly"> Flagged only</label>
         </div>
+        <div id="badFiles"></div>
+        <div id="recTable" class="tbl-wrap tall table-frame"></div>
+      </section>
+    </section>
 
-        <div class="rsec">
-          <div class="rsec-head">Overview</div>
-          <div id="kpis" class="kpis"></div>
-          <div id="dashTable" class="tbl-wrap"></div>
-        </div>
+    <section class="pane pane-reconcile" id="paneReconcile" role="tabpanel" aria-labelledby="tabReconcile" hidden>
+      <header class="view-header">
+        <div><h2>Reconcile</h2><p>Declared and paid amounts are compared by head and period. Mismatches appear first.</p></div>
+        <button class="btn secondary" type="button" disabled title="Export from Results after reviewing mismatches">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-download"/></svg>Export
+        </button>
+      </header>
+      <section class="rsec reconcile-section" id="reconSec" hidden>
+        <div class="rsec-head">Comparison <span class="count" id="reconCount" aria-live="polite"></span></div>
+        <div id="reconTable" class="tbl-wrap table-frame"></div>
+      </section>
+      <div class="empty-state" id="reconEmpty">Run files to see reconciliations.</div>
+    </section>
+  </main>
+</div>
 
-        <div class="rsec" id="reconSec" hidden>
-          <div class="rsec-head">Reconciliation
-            <span class="count" id="reconCount" aria-live="polite"></span>
-          </div>
-          <div id="reconTable" class="tbl-wrap"></div>
-        </div>
-
-        <div class="rsec" id="reviewSec" hidden>
-          <div class="rsec-head">Review Evidence</div>
-          <div id="reviewDetails" class="tbl-wrap"></div>
-        </div>
-
-        <div class="rsec">
-          <div class="rsec-head">Records
-            <span class="count" id="recCount" aria-live="polite"></span>
-            <label class="record-filter"><select id="filterType" aria-label="Filter by return type"><option value="">All types</option></select></label>
-            <label class="record-filter"><select id="filterFY" aria-label="Filter by financial year"><option value="">All years</option></select></label>
-            <label class="record-filter"><select id="filterStatus" aria-label="Filter by status"><option value="">All states</option></select></label>
-            <label class="flagtoggle"><input type="checkbox" id="flaggedOnly"> Flagged only</label>
-          </div>
-          <div id="badFiles"></div>
-          <div id="recTable" class="tbl-wrap tall"></div>
-        </div>
-
-      </div><!-- /paneResults -->
-
-    </div>
-  </section>
-
-</div><!-- /main-wrap -->
+<dialog class="privacy-dialog" id="privacyDialog" aria-labelledby="privacyTitle">
+  <button class="dialog-close" id="privacyClose" type="button" aria-label="Close">&times;</button>
+  <span class="dialog-eyebrow">Private by design</span>
+  <h2 id="privacyTitle">Your documents stay on this device.</h2>
+  <p>The analyser is downloaded to your browser. When you add a PDF, it moves only into the browser's working memory. There is no document upload and no server-side processing.</p>
+  <ol>
+    <li><b>Add PDFs.</b> They remain in this browser tab.</li>
+    <li><b>Run the analyser.</b> WebAssembly and local OCR use your computer's processor.</li>
+    <li><b>Download Excel.</b> The workbook is created locally for you.</li>
+    <li><b>Close the tab.</b> The working document data is discarded.</li>
+  </ol>
+  <div class="privacy-proof"><span class="dot ok"></span>The analyser keeps working after the first load even when the internet is disconnected.</div>
+</dialog>
 
 <noscript>
   <div style="max-width:640px;margin:40px auto;padding:16px;border:1px solid #c66;border-radius:8px;font-family:sans-serif">
