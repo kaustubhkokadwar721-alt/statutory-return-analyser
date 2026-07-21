@@ -121,6 +121,36 @@ def clean_address(block_lines):
     return {"name": out[0], "address": " ".join(out[1:]) or None}
 
 
+def add_invoice_summary(doc, row):
+    """Keep one invoice-summary row per source invoice across Parts I and IV."""
+    key = (row.get("sno"), row.get("invoice_no"))
+    if not any((item.get("sno"), item.get("invoice_no")) == key
+               for item in doc["invoice_summary"]):
+        doc["invoice_summary"].append(row)
+
+
+def parse_part1_invoice_summary(lines):
+    """Read the F. Invoice Summary grid printed on the first Part-I page."""
+    i, header = find_line(
+        lines, r"1\.SNO\s+2\.INV\s+NO\.\s+3\.\s*INV\s+AMT.*4\.CURRENC")
+    if header is None:
+        return []
+
+    rows = []
+    for line in lines[i + 1:]:
+        if re.search(r"4\.\s*CIN\s+NO", line["text"]):
+            break
+        # The invoice grid occupies the right side of the combined airway-bill row.
+        text = " ".join(word["text"] for word in line["words"] if word["x0"] >= 340)
+        match = HINV_ROW_RX.fullmatch(text)
+        if match:
+            rows.append({
+                "sno": int(match.group(1)), "invoice_no": match.group(2),
+                "amount": to_num(match.group(3)), "currency": match.group(4),
+            })
+    return rows
+
+
 # ── section parsers ───────────────────────────────────────────────────────────
 
 def parse_header(lines):
@@ -238,12 +268,26 @@ def parse_part1(lines, words):
         nums = [to_num(w["text"]) for w in band if to_num(w["text"]) is not None]
         if nums:
             p["dbk_claim"] = nums[0]
-    m = re.search(r"5\.RODTEP AMT\s*6\.ROSCTL AMT\s*(" + NUM + r")\s+(" + NUM + ")", joined)
-    if m:
-        p["rodtep_amt"], p["rosctl_amt"] = to_num(m.group(1)), to_num(m.group(2))
-    m = re.search(r"2\.\s*IGST AMT\s*(" + NUM + ")", joined)
-    if m:
-        p["igst_amt"] = to_num(m.group(1))
+    # Claim values are in a separate, right-hand grid. Reading the next text
+    # numbers in stream order picks up Deductions/P-C zeros instead of RoDTEP.
+    _, claim_header = find_line(
+        lines, r"4\.IGST\s+VALUE\s+5\.RODTEP\s+AMT\s+6\.ROSCTL\s+AMT")
+    if claim_header is not None:
+        anchors = [word for word in claim_header["words"]
+                   if re.match(r"^[456]\.(?:IGST|RODTEP|ROSCTL)$", word["text"])]
+        if len(anchors) == 3:
+            bottom = max(word["bottom"] for word in anchors)
+            values = words_in_box(words, anchors[0]["x0"] - 8, bottom,
+                                  600, bottom + 8)
+            zones = zone_split(anchors, [word for word in values
+                                         if to_num(word["text"]) is not None],
+                               left_slack=0)
+            for index, key in enumerate(("igst_amt", "rodtep_amt", "rosctl_amt")):
+                value = to_num(zones.get(index))
+                if value is not None:
+                    p[key] = value
+
+    p["invoice_summary"] = parse_part1_invoice_summary(lines)
 
     i, hdr = find_line(lines, r"1\.SEAL TYPE\s+2\.NATURE OF CARGO")
     if hdr is not None and i + 1 < len(lines):
@@ -544,7 +588,7 @@ def parse_part4_page(lines, doc):
         elif section == "hinv":
             m = HINV_ROW_RX.match(t)
             if m:
-                doc["invoice_summary"].append({
+                add_invoice_summary(doc, {
                     "sno": int(m.group(1)), "invoice_no": m.group(2),
                     "amount": to_num(m.group(3)), "currency": m.group(4)})
 
@@ -640,7 +684,10 @@ def parse_shipping_bill(pdf, fname):
         part = classify_page(lines)
         try:
             if part == "I":
-                doc.update(parse_part1(lines, words))
+                part1 = parse_part1(lines, words)
+                for row in part1.pop("invoice_summary", []):
+                    add_invoice_summary(doc, row)
+                doc.update(part1)
             elif part == "II":
                 parse_part2_page(lines, words, doc["invoices"])
             elif part == "III":
@@ -719,3 +766,15 @@ def sb_item_rows(doc):
             "State_Origin": it.get("state_of_origin"),
         })
     return rows
+
+
+def sb_invoice_summary_rows(doc):
+    """Invoice-summary ledger from the F. grid on the first Part-I page."""
+    return [{
+        "SB_No": doc.get("sb_no"),
+        "SB_Date": doc.get("sb_date"),
+        "Invoice_SNo": row.get("sno"),
+        "Invoice_No": row.get("invoice_no"),
+        "Invoice_Amount": row.get("amount"),
+        "Currency": row.get("currency"),
+    } for row in doc.get("invoice_summary", [])]
