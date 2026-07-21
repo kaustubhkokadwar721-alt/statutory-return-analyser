@@ -51,7 +51,8 @@ Shipping bills get the deepest verification: declared invoice / item / container
 are checked against what was parsed, the FOB total against the sum of item-level FOB
 values, and drawback & RODTEP claims against their per-item rows — so a bill only
 shows **OK** when its own arithmetic ties out. Scanned (image-only) shipping bills are
-surfaced as *Unreadable* with instructions to OCR them first.
+skipped, even after local OCR identifies them, because their tables and claim values
+cannot be verified safely.
 
 ## Design
 

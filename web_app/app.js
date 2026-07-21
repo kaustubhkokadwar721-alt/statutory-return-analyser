@@ -716,6 +716,7 @@ function renderBadFiles() {
   if (!parseErrors.length) { el.innerHTML = ""; return; }
   const labels = {
     NeedsOCR: "Needs OCR", NeedsStructuredOCR: "Needs structured OCR",
+    ScannedShippingBill: "Scanned shipping bill (skipped)",
     MixedDocument: "Mixed document", AmbiguousType: "Needs review", UnknownType: "Unknown type",
     EncryptedPDF: "Password protected", UnsupportedDocument: "Different document",
     UnknownBankLayout: "Unknown bank layout",

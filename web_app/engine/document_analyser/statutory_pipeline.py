@@ -269,7 +269,15 @@ def run_unified_pipeline(
                 return_type, doc_kind = winner["return_type"], winner["doc_kind"]
                 audit_contexts[fname] = (preflight, classification)
 
-                if preflight["ocr_used"] and return_type in {"GSTR1", "GSTR3B", "SB"}:
+                if preflight["ocr_used"] and return_type == "SB":
+                    errors.append({
+                        "File": fname, "Error_Type": "ScannedShippingBill",
+                        "Message": "Scanned Shipping Bills are skipped because OCR cannot reliably preserve their tables and claim values.",
+                        "Action": "Use the original digital ICEGATE PDF. No figures were extracted from this scan.",
+                    })
+                    continue
+
+                if preflight["ocr_used"] and return_type in {"GSTR1", "GSTR3B"}:
                     errors.append({
                         "File": fname, "Error_Type": "NeedsStructuredOCR",
                         "Message": "This scanned layout needs table-aware OCR before its proven parser can be used.",
