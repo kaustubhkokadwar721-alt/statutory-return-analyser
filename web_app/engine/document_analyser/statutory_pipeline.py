@@ -293,7 +293,7 @@ def run_unified_pipeline(
                     meta = res["Metadata"]
                     sec_totals = res["Section_Totals"]
 
-                    chk_errs = run_sanity_checks_gstr1(sec_totals, meta, [])
+                    chk_errs = run_sanity_checks_gstr1(sec_totals, meta)
                     flags  = "; ".join(e["Check"] for e in chk_errs)
                     status = "Error" if any(e.get("Status") == "FAIL" for e in chk_errs) else ("Review" if flags else "OK")
 
