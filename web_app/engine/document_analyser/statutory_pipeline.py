@@ -191,12 +191,185 @@ def _detail_df(rlist: list):
     return df
 
 
+def _normalise_filing_date(value) -> str | None:
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+    text = str(value).strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return text
+    parsed = pd.to_datetime(value, format="mixed", dayfirst=True, errors="coerce")
+    return None if pd.isna(parsed) else parsed.strftime("%Y-%m-%d")
+
+
+def _assemble_result(
+    records: list,
+    errors: list,
+    reconciliation: list,
+    raw_details: dict,
+    gstr3b_analysis: list,
+    sb_items: list,
+    finding_rows: list,
+    evidence_rows: list,
+    output_dir: str,
+    log: Callable,
+    write_workbook: bool,
+) -> dict:
+    """Build the shared ledger contract and, for the final pass, one workbook."""
+    df_all = pd.DataFrame(records)
+    if not df_all.empty:
+        if "FilingDate" in df_all.columns:
+            df_all["FilingDate"] = df_all["FilingDate"].map(_normalise_filing_date)
+        lead = ["ReturnType", "DocKind", "EntityID", "EntityName", "FY",
+                "PeriodDate", "MonthName", "Status", "Confidence", "ConfidenceGrade",
+                "ProfileVersion", "OCRUsed", "ValidationFindings", "Flags", "PrimaryAmount",
+                "DocRef", "FilingDate", "SourceFile"]
+        df_all = df_all[[c for c in lead if c in df_all.columns]
+                        + [c for c in df_all.columns if c not in lead]]
+        df_all = df_all.sort_values(
+            ["ReturnType", "DocKind", "FY", "MonthIndex", "EntityID", "SourceFile"]
+        )
+
+    df_dash = pd.DataFrame()
+    if not df_all.empty:
+        df_dash = df_all.groupby(["ReturnType", "DocKind", "FY"]).agg(
+            Records=("Status", "count"),
+            OK=("Status", lambda values: (values == "OK").sum()),
+            Review=("Status", lambda values: (values == "Review").sum()),
+            Errors=("Status", lambda values: (values == "Error").sum()),
+            Periods=("PeriodDate", "nunique"),
+            TotalAmount=("PrimaryAmount", "sum"),
+        ).reset_index()
+
+    workbook_name = "Statutory_Returns.xlsx"
+    path_xlsx = None
+    if write_workbook:
+        flagged_count = sum(record.get("Status") != "OK" for record in records) + len(errors)
+        log("3", f"Validation complete. {flagged_count} flagged.")
+        log("4", "Writing workbook...")
+        path_xlsx = os.path.join(output_dir, workbook_name)
+        with pd.ExcelWriter(path_xlsx, engine="xlsxwriter") as xw:
+            if not df_all.empty:
+                write_sheet(xw, df_all, "Consolidated", sort=False)
+            if not df_dash.empty:
+                write_sheet(xw, df_dash, "Dashboard", sort=False)
+            if reconciliation:
+                write_sheet(xw, pd.DataFrame(reconciliation), "Reconciliation", sort=False)
+            if finding_rows:
+                write_sheet(xw, pd.DataFrame(finding_rows), "Validation_Findings", sort=False)
+            if evidence_rows:
+                write_sheet(xw, pd.DataFrame(evidence_rows), "Review_Evidence", sort=False)
+            if gstr3b_analysis:
+                frame = pd.DataFrame(gstr3b_analysis).reindex(
+                    columns=GSTR3B_ANALYSIS_COLUMNS
+                ).sort_values(["Return Period", "GSTIN", "Source File"], na_position="last")
+                write_sheet(xw, frame, "GSTR 3B", sort=False)
+            for return_type, details in raw_details.items():
+                if details:
+                    write_sheet(xw, _detail_df(details), return_type, sort=False)
+            if sb_items:
+                write_sheet(xw, pd.DataFrame(sb_items), "SB_Items", sort=False)
+            if errors:
+                write_sheet(xw, pd.DataFrame(errors), "Parsing_Errors", sort=False)
+            if df_all.empty and not errors and not sb_items:
+                xw.book.add_worksheet("Empty")
+        log("5", "Workbook written.")
+
+    reviews = []
+    for record in records:
+        if record.get("Status") == "OK":
+            continue
+        source = record.get("SourceFile")
+        reviews.append({
+            "SourceFile": source,
+            "ReturnType": record.get("ReturnType"),
+            "DocKind": record.get("DocKind"),
+            "Status": record.get("Status"),
+            "Confidence": record.get("Confidence"),
+            "ConfidenceGrade": record.get("ConfidenceGrade"),
+            "ProfileVersion": record.get("ProfileVersion"),
+            "Findings": [row for row in finding_rows if row.get("SourceFile") == source],
+            "Evidence": [row for row in evidence_rows if row.get("SourceFile") == source],
+        })
+
+    result = {
+        "workbook": path_xlsx,
+        "workbook_name": workbook_name,
+        "consolidated": _json_records(df_all),
+        "dashboard": _json_records(df_dash),
+        "reconciliation": reconciliation,
+        "errors": errors,
+        "reviews": reviews,
+    }
+    if not write_workbook:
+        result["shard_data"] = {
+            "raw_details": {
+                key: _json_records(_detail_df(value)) if value else []
+                for key, value in raw_details.items()
+            },
+            "gstr3b_analysis": _json_records(pd.DataFrame(gstr3b_analysis)),
+            "sb_items": _json_records(pd.DataFrame(sb_items)),
+            "findings": finding_rows,
+            "evidence": evidence_rows,
+        }
+    return result
+
+
+def combine_shard_results(
+    shard_results: list[dict],
+    output_dir: str,
+    progress_cb: Callable | None = None,
+) -> dict:
+    """Merge independent extraction shards and create the single final workbook."""
+    os.makedirs(output_dir, exist_ok=True)
+
+    def log(step, message=""):
+        if progress_cb:
+            progress_cb(step, message)
+
+    records = []
+    errors = []
+    raw_details = {k: [] for k in ("GSTR1", "ESIC", "PF", "PTRC", "TDS", "SB", "EBRC", "EWB")}
+    gstr3b_analysis = []
+    sb_items = []
+    finding_rows = []
+    evidence_rows = []
+    for result in shard_results:
+        records.extend(result.get("consolidated") or [])
+        errors.extend(result.get("errors") or [])
+        shard_data = result.get("shard_data") or {}
+        for key, values in (shard_data.get("raw_details") or {}).items():
+            raw_details.setdefault(key, []).extend(values or [])
+        gstr3b_analysis.extend(shard_data.get("gstr3b_analysis") or [])
+        sb_items.extend(shard_data.get("sb_items") or [])
+        finding_rows.extend(shard_data.get("findings") or [])
+        evidence_rows.extend(shard_data.get("evidence") or [])
+
+    errors.sort(key=lambda row: str(row.get("File") or ""))
+    for values in raw_details.values():
+        values.sort(key=lambda row: str(row.get("SourceFile") or ""))
+    sb_items.sort(key=lambda row: str(row.get("SourceFile") or ""))
+    finding_rows.sort(key=lambda row: str(row.get("SourceFile") or ""))
+    evidence_rows.sort(key=lambda row: str(row.get("SourceFile") or ""))
+
+    reconciliation = _reconcile(records)
+    return _assemble_result(
+        records, errors, reconciliation, raw_details, gstr3b_analysis, sb_items,
+        finding_rows, evidence_rows, output_dir, log, write_workbook=True,
+    )
+
+
 # ── Main pipeline ─────────────────────────────────────────────────────────────
 
 def run_unified_pipeline(
     input_folder: str,
     output_dir: str,
     progress_cb: Callable | None = None,
+    write_workbook: bool = True,
 ) -> list[dict]:
 
     os.makedirs(output_dir, exist_ok=True)
@@ -543,97 +716,9 @@ def run_unified_pipeline(
         evidence_rows.extend(evidence)
     records = audited_records
 
-    # ── Build the consolidated ledger ──
-    df_all = pd.DataFrame(records)
-    if not df_all.empty:
-        # Normalise FilingDate to ISO across all heads (GSTR uses DD/MM/YYYY)
-        if "FilingDate" in df_all.columns:
-            df_all["FilingDate"] = pd.to_datetime(
-                df_all["FilingDate"], format="mixed", dayfirst=True, errors="coerce"
-            ).dt.strftime("%Y-%m-%d")
-        # Column order: identity first, then status/amounts
-        lead = ["ReturnType", "DocKind", "EntityID", "EntityName", "FY",
-                "PeriodDate", "MonthName", "Status", "Confidence", "ConfidenceGrade",
-                "ProfileVersion", "OCRUsed", "ValidationFindings", "Flags", "PrimaryAmount",
-                "DocRef", "FilingDate", "SourceFile"]
-        df_all = df_all[[c for c in lead if c in df_all.columns]
-                        + [c for c in df_all.columns if c not in lead]]
-        df_all = df_all.sort_values(["ReturnType", "DocKind", "FY", "MonthIndex", "EntityID"])
-
-    # ── Dashboard: grouped by head × DocKind × FY (kinds counted separately) ──
-    df_dash = pd.DataFrame()
-    if not df_all.empty:
-        df_dash = df_all.groupby(["ReturnType", "DocKind", "FY"]).agg(
-            Records          = ("Status", "count"),
-            OK               = ("Status", lambda s: (s == "OK").sum()),
-            Review           = ("Status", lambda s: (s == "Review").sum()),
-            Errors           = ("Status", lambda s: (s == "Error").sum()),
-            Periods          = ("PeriodDate", "nunique"),
-            TotalAmount      = ("PrimaryAmount", "sum"),
-        ).reset_index()
-
-    # ── Write ONE Excel workbook (all sheets) — the sole deliverable ──
-    flagged_count = sum(record.get("Status") != "OK" for record in records) + len(errors)
-    log("3", f"Validation complete. {flagged_count} flagged.")
-    log("4", "Writing workbook...")
-    workbook_name = "Statutory_Returns.xlsx"
-    path_xlsx = os.path.join(output_dir, workbook_name)
-    with pd.ExcelWriter(path_xlsx, engine="xlsxwriter") as xw:
-        if not df_all.empty:
-            write_sheet(xw, df_all, "Consolidated", sort=False)
-        if not df_dash.empty:
-            write_sheet(xw, df_dash, "Dashboard", sort=False)
-        if reconciliation:
-            write_sheet(xw, pd.DataFrame(reconciliation), "Reconciliation", sort=False)
-        if finding_rows:
-            write_sheet(xw, pd.DataFrame(finding_rows), "Validation_Findings", sort=False)
-        if evidence_rows:
-            write_sheet(xw, pd.DataFrame(evidence_rows), "Review_Evidence", sort=False)
-        if gstr3b_analysis:
-            df_gstr3b_analysis = pd.DataFrame(gstr3b_analysis).reindex(
-                columns=GSTR3B_ANALYSIS_COLUMNS
-            )
-            df_gstr3b_analysis = df_gstr3b_analysis.sort_values(
-                ["Return Period", "GSTIN", "Source File"], na_position="last"
-            )
-            write_sheet(xw, df_gstr3b_analysis, "GSTR 3B", sort=False)
-        for rtype, rlist in raw_details.items():
-            if rlist:
-                write_sheet(xw, _detail_df(rlist), rtype, sort=False)
-        if sb_items:
-            write_sheet(xw, pd.DataFrame(sb_items), "SB_Items", sort=False)
-        if errors:
-            write_sheet(xw, pd.DataFrame(errors), "Parsing_Errors", sort=False)
-        # xlsxwriter needs at least one visible sheet
-        if df_all.empty and not errors and not sb_items:
-            xw.book.add_worksheet("Empty")
-
-    log("5", "Workbook written.")
-
-    reviews = []
-    for record in records:
-        if record.get("Status") == "OK":
-            continue
-        source = record.get("SourceFile")
-        reviews.append({
-            "SourceFile": source,
-            "ReturnType": record.get("ReturnType"),
-            "DocKind": record.get("DocKind"),
-            "Status": record.get("Status"),
-            "Confidence": record.get("Confidence"),
-            "ConfidenceGrade": record.get("ConfidenceGrade"),
-            "ProfileVersion": record.get("ProfileVersion"),
-            "Findings": [row for row in finding_rows if row.get("SourceFile") == source],
-            "Evidence": [row for row in evidence_rows if row.get("SourceFile") == source],
-        })
-
+    result = _assemble_result(
+        records, errors, reconciliation, raw_details, gstr3b_analysis, sb_items,
+        finding_rows, evidence_rows, output_dir, log, write_workbook,
+    )
     log("6", f"Pipeline complete. {len(records)} records, {len(errors)} errors.")
-    return {
-        "workbook":       path_xlsx,
-        "workbook_name":  workbook_name,
-        "consolidated":   _json_records(df_all),
-        "dashboard":      _json_records(df_dash),
-        "reconciliation": reconciliation,
-        "errors":         errors,
-        "reviews":        reviews,
-    }
+    return result

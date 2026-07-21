@@ -93,11 +93,15 @@ for d in ("/work/in", "/work/out"):
     self.postMessage({ type: "progress", step: String(step || ""), detail: String(detail || "") });
   };
   pyodide.globals.set("run_kind", payload.kind || "auto");
+  pyodide.globals.set("run_shard", Boolean(payload.shard));
   pyodide.globals.set("progress_cb", progress);
   try {
     const resultJson = await pyodide.runPythonAsync(`
 import web_bootstrap, json
-result = web_bootstrap.run(str(run_kind), "/work/in", "/work/out", progress_cb=progress_cb)
+result = web_bootstrap.run(
+    str(run_kind), "/work/in", "/work/out",
+    progress_cb=progress_cb, shard=bool(run_shard),
+)
 json.dumps(result)
     `);
     const result = JSON.parse(resultJson);
@@ -109,6 +113,37 @@ json.dumps(result)
     return { result, workbookBytes };
   } finally {
     pyodide.globals.delete("run_kind");
+    pyodide.globals.delete("run_shard");
+    pyodide.globals.delete("progress_cb");
+  }
+}
+
+async function combine(payload) {
+  const progress = (step, detail) => {
+    self.postMessage({ type: "progress", step: String(step || ""), detail: String(detail || "") });
+  };
+  pyodide.globals.set("shard_results_json", JSON.stringify(payload.results || []));
+  pyodide.globals.set("progress_cb", progress);
+  try {
+    const resultJson = await pyodide.runPythonAsync(`
+import json, os, shutil, web_bootstrap
+if os.path.isdir("/work/out"):
+    shutil.rmtree("/work/out")
+os.makedirs("/work/out", exist_ok=True)
+result = web_bootstrap.combine(
+    json.loads(str(shard_results_json)), "/work/out", progress_cb=progress_cb
+)
+json.dumps(result)
+    `);
+    const result = JSON.parse(resultJson);
+    let workbookBytes = null;
+    if (result.workbook) {
+      const bytes = pyodide.FS.readFile(result.workbook);
+      workbookBytes = bytes.slice().buffer;
+    }
+    return { result, workbookBytes };
+  } finally {
+    pyodide.globals.delete("shard_results_json");
     pyodide.globals.delete("progress_cb");
   }
 }
@@ -123,6 +158,7 @@ self.addEventListener("message", async (event) => {
   try {
     const value = action === "classify" ? await classify(payload.text || "")
       : action === "run" ? await run(payload)
+      : action === "combine" ? await combine(payload)
       : (() => { throw new Error(`Unknown worker action: ${action}`); })();
     const transfer = value && value.workbookBytes ? [value.workbookBytes] : [];
     self.postMessage({ type: "response", id, ok: true, value }, transfer);

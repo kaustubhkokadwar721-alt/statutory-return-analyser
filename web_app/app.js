@@ -7,6 +7,8 @@ const OCR_PDF_WORKER = "./ocr/pdf.worker.min.mjs";
 // ---- state ----
 let ready      = false;
 let engineWorker = null;
+let secondaryWorker = null;
+let secondaryWorkerPromise = null;
 let workerRequestId = 0;
 const workerRequests = new Map();
 let pickedFiles = [];   // [{name, displayName, bytes}] name is unique in the sandbox
@@ -21,6 +23,11 @@ let activeOcrWorker = null;
 let rejectActiveOcr = null;
 let ocrCancelRequested = false;
 let ocrSidecars = new Map();
+let firstPageText = new Map();
+let parallelRunActive = false;
+let parallelFinalizing = false;
+const parallelSeenFiles = new Set();
+const PARALLEL_SAFE_TYPES = new Set(["GSTR1", "GSTR3B", "SB", "EBRC", "EWB"]);
 
 // ---- dom ----
 const $ = (s) => document.querySelector(s);
@@ -74,6 +81,9 @@ function renderRunProgress(label) {
 
 function beginRunProgress(total) {
   Object.assign(runProgress, { total, parsed: 0, flags: null, workbook: "Waiting", percent: 2 });
+  parallelRunActive = false;
+  parallelFinalizing = false;
+  parallelSeenFiles.clear();
   activityStrip.classList.remove("complete", "error");
   activityStrip.setAttribute("aria-busy", "true");
   renderRunProgress("Preparing files...");
@@ -110,9 +120,10 @@ function handleEngineProgress(step, detail) {
   const banking = step === "BANK" ? detail.match(/^(\d+)\/(\d+)\s+(.*)/) : null;
   const fileProgress = parsing || banking;
   if (fileProgress) {
-    const parsed = Number(fileProgress[1]);
-    const total = Number(fileProgress[2]) || runProgress.total;
     const filename = fileProgress[3];
+    if (parallelRunActive) parallelSeenFiles.add(filename);
+    const parsed = parallelRunActive ? parallelSeenFiles.size : Number(fileProgress[1]);
+    const total = parallelRunActive ? runProgress.total : (Number(fileProgress[2]) || runProgress.total);
     updateRunProgress({
       parsed,
       total,
@@ -122,7 +133,7 @@ function handleEngineProgress(step, detail) {
   }
 
   const validation = detail.match(/Validation complete\.\s+(\d+)\s+flagged/i);
-  if (validation) {
+  if (validation && (!parallelRunActive || parallelFinalizing)) {
     updateRunProgress({ parsed: runProgress.total, flags: Number(validation[1]), percent: 86 }, "Validation complete");
   } else if (/Writing workbook/i.test(detail)) {
     updateRunProgress({ percent: 92, workbook: "Writing" }, "Writing workbook...");
@@ -413,18 +424,29 @@ function diagDone() {
 }
 
 // ---- parser worker: Pyodide stays off the UI thread ----
-function failWorkerRequests(message) {
-  for (const request of workerRequests.values()) request.reject(new Error(message));
-  workerRequests.clear();
+function failWorkerRequests(message, failedWorker = null) {
+  for (const [id, request] of workerRequests) {
+    if (failedWorker && request.worker !== failedWorker) continue;
+    request.reject(new Error(message));
+    workerRequests.delete(id);
+  }
 }
 
-function engineRequest(action, payload, transfer = []) {
-  if (!engineWorker) return Promise.reject(new Error("The local engine is not available."));
+function engineRequest(action, payload, transfer = [], worker = engineWorker) {
+  if (!worker) return Promise.reject(new Error("The local engine is not available."));
   const id = ++workerRequestId;
   return new Promise((resolve, reject) => {
-    workerRequests.set(id, { resolve, reject });
-    engineWorker.postMessage({ id, action, payload }, transfer);
+    workerRequests.set(id, { resolve, reject, worker });
+    worker.postMessage({ id, action, payload }, transfer);
   });
+}
+
+function settleWorkerResponse(message) {
+  const request = workerRequests.get(message.id);
+  if (!request) return;
+  workerRequests.delete(message.id);
+  if (message.ok) request.resolve(message.value);
+  else request.reject(new Error(message.error || "The background parser failed."));
 }
 
 function startEngineWorker() {
@@ -472,14 +494,53 @@ function startEngineWorker() {
         return;
       }
       if (message.type === "response") {
-        const request = workerRequests.get(message.id);
-        if (!request) return;
-        workerRequests.delete(message.id);
-        if (message.ok) request.resolve(message.value);
-        else request.reject(new Error(message.error || "The background parser failed."));
+        settleWorkerResponse(message);
       }
     });
   });
+}
+
+function ensureSecondaryWorker() {
+  if (secondaryWorker) return Promise.resolve(secondaryWorker);
+  if (secondaryWorkerPromise) return secondaryWorkerPromise;
+  secondaryWorkerPromise = new Promise((resolve, reject) => {
+    const worker = new Worker("./engine.worker.js");
+    let bootSettled = false;
+    const fail = (message) => {
+      failWorkerRequests(message, worker);
+      worker.terminate();
+      if (secondaryWorker === worker) secondaryWorker = null;
+      secondaryWorkerPromise = null;
+      if (!bootSettled) {
+        bootSettled = true;
+        reject(new Error(message));
+      } else {
+        log(`  [WORKER 2] Stopped: ${message}`);
+      }
+    };
+    worker.addEventListener("error", (event) => {
+      fail(event.message || "The second parser stopped unexpectedly.");
+    });
+    worker.addEventListener("message", (event) => {
+      const message = event.data || {};
+      if (message.type === "boot-progress") {
+        updateRunProgress({ percent: Math.max(runProgress.percent, 14) }, "Starting second local parser...");
+      } else if (message.type === "boot-error") {
+        fail(message.error || "The second parser could not start.");
+      } else if (message.type === "ready" && !bootSettled) {
+        bootSettled = true;
+        secondaryWorker = worker;
+        secondaryWorkerPromise = null;
+        resolve(worker);
+      } else if (message.type === "progress") {
+        handleEngineProgress(String(message.step || ""), String(message.detail || ""));
+        log(`  [W2:${message.step}] ${message.detail || ""}`);
+      } else if (message.type === "response") {
+        settleWorkerResponse(message);
+      }
+    });
+  });
+  return secondaryWorkerPromise;
 }
 
 async function boot() {
@@ -548,6 +609,7 @@ async function loadPdfRenderer() {
 async function findScannedFiles() {
   const pdfjs = await loadPdfRenderer();
   const scanned = [];
+  firstPageText = new Map();
   for (let index = 0; index < pickedFiles.length; index += 1) {
     const file = pickedFiles[index];
     setStatus(`Checking text layer ${index + 1}/${pickedFiles.length} - ${displayFileName(file)}`, "busy");
@@ -562,8 +624,10 @@ async function findScannedFiles() {
       page = await pdfDocument.getPage(1);
       const content = await page.getTextContent();
       const text = content.items.map((item) => item.str || "").join(" ").trim();
+      firstPageText.set(file.name, text);
       if (text.length < 20) scanned.push(file);
     } catch (error) {
+      firstPageText.set(file.name, "");
       log(`  [PREFLIGHT] Could not inspect ${displayFileName(file)}; the parser will check it. ${error.message || error}`);
     } finally {
       if (page) page.cleanup();
@@ -572,6 +636,19 @@ async function findScannedFiles() {
     }
   }
   return scanned;
+}
+
+async function canRunWithTwoWorkers(scannedFiles) {
+  if (activeMode !== "auto" || pickedFiles.length < 4 || scannedFiles.length) return false;
+  for (const file of pickedFiles) {
+    const text = firstPageText.get(file.name) || "";
+    if (text.length < 20) return false;
+    const classification = await classifyOcrProbe(text);
+    if (!classification.accepted || !PARALLEL_SAFE_TYPES.has(classification.return_type)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 class OcrCancelledError extends Error {}
@@ -729,17 +806,59 @@ cancelOcrBtn.addEventListener("click", () => {
   if (rejectActiveOcr) rejectActiveOcr(new OcrCancelledError("OCR stopped by the user."));
 });
 
-async function runEngine() {
-  const files = pickedFiles.map((file) => ({
+async function runEngine(sourceFiles = pickedFiles, worker = engineWorker, shard = false) {
+  const files = sourceFiles.map((file) => ({
     name: file.name,
     bytes: file.bytes.slice().buffer,
   }));
-  const ocrPayload = [...ocrSidecars].map(([name, text]) => ({ name, text }));
+  const names = new Set(sourceFiles.map((file) => file.name));
+  const ocrPayload = [...ocrSidecars]
+    .filter(([name]) => names.has(name))
+    .map(([name, text]) => ({ name, text }));
   return engineRequest("run", {
     kind: activeMode,
     files,
     ocrSidecars: ocrPayload,
-  }, files.map((file) => file.bytes));
+    shard,
+  }, files.map((file) => file.bytes), worker);
+}
+
+function balanceFilesForWorkers(files) {
+  const shards = [{ bytes: 0, files: [] }, { bytes: 0, files: [] }];
+  [...files].sort((a, b) => b.bytes.length - a.bytes.length).forEach((file) => {
+    shards.sort((a, b) => a.bytes - b.bytes);
+    shards[0].files.push(file);
+    shards[0].bytes += file.bytes.length;
+  });
+  return shards.map((shard) => shard.files);
+}
+
+async function runWithTwoWorkers() {
+  try {
+    const workerTwo = await ensureSecondaryWorker();
+    const shards = balanceFilesForWorkers(pickedFiles);
+    parallelRunActive = true;
+    parallelFinalizing = false;
+    parallelSeenFiles.clear();
+    updateRunProgress({ parsed: 0, percent: 20 }, "Two local parsers ready");
+    log(`  [PARALLEL] Two workers: ${shards[0].length} + ${shards[1].length} files (size-balanced).`);
+    const extracted = await Promise.all([
+      runEngine(shards[0], engineWorker, true),
+      runEngine(shards[1], workerTwo, true),
+    ]);
+    parallelFinalizing = true;
+    updateRunProgress({ parsed: pickedFiles.length, percent: 84 }, "Combining extracted records...");
+    return engineRequest("combine", {
+      results: extracted.map((item) => item.result),
+    });
+  } catch (error) {
+    log(`  [PARALLEL] Falling back to one parser: ${error.message || error}`);
+    parallelRunActive = false;
+    parallelFinalizing = false;
+    parallelSeenFiles.clear();
+    updateRunProgress({ parsed: 0, flags: null, workbook: "Waiting", percent: 25 }, "Continuing with one local parser...");
+    return runEngine();
+  }
 }
 
 runBtn.addEventListener("click", async () => {
@@ -760,8 +879,11 @@ runBtn.addEventListener("click", async () => {
   setStatus("Processing…", "busy");
 
   try {
+    let scannedFiles = [];
+    if (ocrEnabled.checked || (activeMode === "auto" && pickedFiles.length >= 4)) {
+      scannedFiles = await findScannedFiles();
+    }
     if (ocrEnabled.checked) {
-      const scannedFiles = await findScannedFiles();
       if (scannedFiles.length) {
         log(`  [PREFLIGHT] ${scannedFiles.length} scanned PDF(s) found from page 1. Running local OCR before parsing.`);
         await ocrScannedFiles(scannedFiles.map((file) => ({ File: file.name, Type: "NeedsOCR" })));
@@ -772,7 +894,8 @@ runBtn.addEventListener("click", async () => {
       activeMode === "bank" ? "Identifying bank layouts and checking balances" : "Auto-detecting return types"
     }…`);
 
-    let workerResult = await runEngine();
+    const useTwoWorkers = await canRunWithTwoWorkers(scannedFiles);
+    let workerResult = useTwoWorkers ? await runWithTwoWorkers() : await runEngine();
     let result = workerResult.result;
     const initialErrors = (result.errors || []).map((error) => ({
       File: error.File, Type: error.Error_Type, Message: error.Message, Action: error.Action,
@@ -781,6 +904,8 @@ runBtn.addEventListener("click", async () => {
       setStatus("Reading scanned PDFs locally...", "busy");
       await ocrScannedFiles(initialErrors);
       log("  [OCR] Re-running the parser with local OCR text.");
+      parallelRunActive = false;
+      parallelFinalizing = false;
       workerResult = await runEngine();
       result = workerResult.result;
     }
@@ -844,6 +969,8 @@ runBtn.addEventListener("click", async () => {
       console.error(e);
     }
   } finally {
+    parallelRunActive = false;
+    parallelFinalizing = false;
     cancelOcrBtn.hidden = true;
     runBtn.disabled = false;
     modeButtons.forEach((button) => { button.disabled = false; });

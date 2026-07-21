@@ -115,10 +115,11 @@ failure is a one-line diagnosis, not a guess.
 ```
 PDFs (in browser)
   → app.js checks page 1 for scanned files and runs local OCR when needed
-  → engine.worker.js gives PDF bytes to Pyodide's in-memory filesystem
-  → the worker auto-detects each return type and parses it
+  → eligible batches are size-balanced across two identical parser workers
+  → each worker extracts into its own Pyodide in-memory filesystem
      (pdfplumber → pandas → sanity checks → normalized CSVs)
-  → the worker returns structured results + workbook bytes to app.js
+  → the primary worker merges results, applies global checks, and writes one workbook
+  → uncertain, scanned, linked-payment, and small batches retain the single-worker path
   → app.js renders the dashboard and local download
 ```
 

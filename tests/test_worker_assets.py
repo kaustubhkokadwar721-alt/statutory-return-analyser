@@ -34,6 +34,15 @@ class WorkerAssetTests(unittest.TestCase):
         index = (WEB / "index.html").read_text(encoding="utf-8")
         self.assertLess(index.index('id="runHint"'), index.index('id="filesTable"'))
 
+    def test_two_worker_pool_has_one_final_combiner(self):
+        app = (WEB / "app.js").read_text(encoding="utf-8")
+        worker = (WEB / "engine.worker.js").read_text(encoding="utf-8")
+
+        self.assertIn("ensureSecondaryWorker", app)
+        self.assertIn("balanceFilesForWorkers", app)
+        self.assertIn('engineRequest("combine"', app)
+        self.assertIn('action === "combine"', worker)
+
 
 if __name__ == "__main__":
     unittest.main()

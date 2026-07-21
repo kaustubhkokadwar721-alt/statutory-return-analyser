@@ -20,7 +20,7 @@ def classify_ocr_probe(text):
     }
 
 
-def run(kind, input_dir, output_dir, progress_cb=None):
+def run(kind, input_dir, output_dir, progress_cb=None, shard=False):
     """Run the local parser and return workbook metadata and review evidence."""
     if kind in {"bank", "bank_statement", "banking"}:
         from document_analyser.banking import run_bank_pipeline
@@ -29,4 +29,16 @@ def run(kind, input_dir, output_dir, progress_cb=None):
 
     from document_analyser.statutory_pipeline import run_unified_pipeline
 
-    return run_unified_pipeline(input_dir, output_dir, progress_cb=progress_cb)
+    return run_unified_pipeline(
+        input_dir,
+        output_dir,
+        progress_cb=progress_cb,
+        write_workbook=not shard,
+    )
+
+
+def combine(shard_results, output_dir, progress_cb=None):
+    """Combine extraction shards and write one globally validated workbook."""
+    from document_analyser.statutory_pipeline import combine_shard_results
+
+    return combine_shard_results(shard_results, output_dir, progress_cb=progress_cb)

@@ -16,8 +16,8 @@ not work because browsers restrict WebAssembly and local fetches.
 
 ```
 index.html             page markup
-app.js                 browser UI, local OCR, and worker bridge
-engine.worker.js       background Pyodide parser; keeps the UI responsive
+app.js                 browser UI, local OCR, and balanced two-worker pool
+engine.worker.js       identical Pyodide parser used for extraction and final merge
 themes/workspace.css   current visual theme
 engine/                maintained parser source
 engine.zip             browser package made from engine/
@@ -29,6 +29,11 @@ ocr/                   local PDF rendering and OCR runtime
 `engine/document_analyser/banking/pipeline.py` handles bank and fixed-deposit documents.
 Each document family keeps its specialised profiles and checks in its own module. Do
 not edit `engine.zip` directly.
+
+For batches of four or more confidently identified, machine-readable independent
+returns, two identical workers extract size-balanced shards. The primary worker then
+performs the final merge and writes one workbook. Other batches fall back to the proven
+single-worker path so cross-document checks are never weakened.
 
 ## Rebuild and verify
 
