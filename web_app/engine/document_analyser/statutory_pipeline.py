@@ -19,7 +19,7 @@ from .compliance_parsers import (
 )
 from .ui import write_sheet
 from .shipping_bill import (
-    parse_shipping_bill, sb_flat_row, sb_item_rows, sb_invoice_summary_rows,
+    parse_shipping_bill, sb_detail_rows, sb_item_rows,
 )
 from .audit import audit_record, classify_document, preflight_pdf
 from .handler_registry import REGISTERED_HANDLERS, run_registered
@@ -216,7 +216,6 @@ def run_unified_pipeline(
     raw_details = {k: [] for k in ("GSTR1", "ESIC", "PF", "PTRC", "TDS", "SB", "EBRC", "EWB")}
     gstr3b_analysis = []
     sb_items = []         # shipping-bill line items (separate ledger)
-    sb_invoice_summaries = []
 
     for idx, fpath in enumerate(pdf_files, 1):
         fname = os.path.basename(fpath)
@@ -452,15 +451,12 @@ def run_unified_pipeline(
                         "FilingDate":    leo.get("date"),
                         "SourceFile":    fname,
                     })
-                    flat = sb_flat_row(doc)
-                    flat["SourceFile"] = fname
-                    raw_details["SB"].append(flat)
+                    for row in sb_detail_rows(doc):
+                        row["SourceFile"] = fname
+                        raw_details["SB"].append(row)
                     for row in sb_item_rows(doc):
                         row["SourceFile"] = fname
                         sb_items.append(row)
-                    for row in sb_invoice_summary_rows(doc):
-                        row["SourceFile"] = fname
-                        sb_invoice_summaries.append(row)
 
                 # ── eBRC (DGFT bank-realisation certificate) ──────────────
                 # ── e-Way Bill (GST movement of goods) ─────────────────────
@@ -603,8 +599,6 @@ def run_unified_pipeline(
                 write_sheet(xw, _detail_df(rlist), rtype, sort=False)
         if sb_items:
             write_sheet(xw, pd.DataFrame(sb_items), "SB_Items", sort=False)
-        if sb_invoice_summaries:
-            write_sheet(xw, pd.DataFrame(sb_invoice_summaries), "SB_Invoice_Summary", sort=False)
         if errors:
             write_sheet(xw, pd.DataFrame(errors), "Parsing_Errors", sort=False)
         # xlsxwriter needs at least one visible sheet

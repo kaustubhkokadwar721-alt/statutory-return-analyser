@@ -778,3 +778,12 @@ def sb_invoice_summary_rows(doc):
         "Invoice_Amount": row.get("amount"),
         "Currency": row.get("currency"),
     } for row in doc.get("invoice_summary", [])]
+
+
+def sb_detail_rows(doc):
+    """File details joined to each Part-I invoice-summary row."""
+    bill = sb_flat_row(doc)
+    summaries = sb_invoice_summary_rows(doc)
+    if not summaries:
+        return [bill]
+    return [{**bill, **summary} for summary in summaries]

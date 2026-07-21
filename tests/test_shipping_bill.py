@@ -6,7 +6,7 @@ from pathlib import Path
 ENGINE = Path(__file__).resolve().parents[1] / "web_app" / "engine"
 sys.path.insert(0, str(ENGINE))
 
-from document_analyser.shipping_bill import parse_part1, sb_invoice_summary_rows
+from document_analyser.shipping_bill import parse_part1, sb_detail_rows, sb_invoice_summary_rows
 
 
 def word(text, x0, top):
@@ -50,6 +50,24 @@ class ShippingBillTests(unittest.TestCase):
         rows = sb_invoice_summary_rows({"sb_no": "123", "sb_date": "01-APR-25",
                                         "invoice_summary": parsed["invoice_summary"]})
         self.assertEqual(rows[0]["Invoice_No"], "INV-001")
+
+    def test_joins_invoice_summary_to_file_details(self):
+        rows = sb_detail_rows({
+            "sb_no": "123",
+            "sb_date": "01-APR-25",
+            "iec": "9876543210",
+            "fob_value_inr": 500000,
+            "invoice_summary": [
+                {"sno": 1, "invoice_no": "INV-001", "amount": 6000, "currency": "USD"},
+                {"sno": 2, "invoice_no": "INV-002", "amount": 7000, "currency": "EUR"},
+            ],
+        })
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["IEC"], "9876543210")
+        self.assertEqual(rows[0]["FOB_INR"], 500000)
+        self.assertEqual(rows[0]["Invoice_No"], "INV-001")
+        self.assertEqual(rows[1]["Invoice_Amount"], 7000)
 
 
 if __name__ == "__main__":
