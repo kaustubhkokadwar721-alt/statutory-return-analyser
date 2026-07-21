@@ -39,6 +39,17 @@ class AuditTests(unittest.TestCase):
         preflight = preflight_pdf(_Pdf("", " "))
         self.assertTrue(preflight["needs_ocr"])
 
+    def test_preflight_does_not_read_remaining_pages_after_empty_first_page(self):
+        class UnreadableLaterPage:
+            def extract_text(self):
+                raise AssertionError("preflight should stop after page 1")
+
+        pdf = _Pdf("")
+        pdf.pages.append(UnreadableLaterPage())
+        preflight = preflight_pdf(pdf)
+        self.assertTrue(preflight["needs_ocr"])
+        self.assertEqual(preflight["pages"], 2)
+
     def test_first_page_shipping_bill_probe_stops_after_identification(self):
         result = classify_ocr_probe(
             "SHIPPING BILL IEC/Br 1234567890 FOB VALUE 1000 RODTEP 20")

@@ -16,7 +16,8 @@ not work because browsers restrict WebAssembly and local fetches.
 
 ```
 index.html             page markup
-app.js                 browser UI, local OCR, and Pyodide bridge
+app.js                 browser UI, local OCR, and worker bridge
+engine.worker.js       background Pyodide parser; keeps the UI responsive
 themes/workspace.css   current visual theme
 engine/                maintained parser source
 engine.zip             browser package made from engine/

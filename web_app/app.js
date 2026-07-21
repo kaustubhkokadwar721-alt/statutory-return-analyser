@@ -1,20 +1,14 @@
 "use strict";
 
 // ---- config ----
-const PYODIDE_INDEX = "./pyodide/";
-const ENGINE_ZIP    = "engine.zip";
 const OCR_PDFJS     = "./ocr/pdf.min.mjs";
 const OCR_PDF_WORKER = "./ocr/pdf.worker.min.mjs";
-const LOCAL_WHEELS  = [
-  "./wheels/charset_normalizer-3.4.7-py3-none-any.whl",
-  "./wheels/pdfminer_six-20260107-py3-none-any.whl",
-  "./wheels/pdfplumber-0.11.9-py3-none-any.whl",
-  "./wheels/xlsxwriter-3.2.9-py3-none-any.whl",
-];
 
 // ---- state ----
-let pyodide    = null;
 let ready      = false;
+let engineWorker = null;
+let workerRequestId = 0;
+const workerRequests = new Map();
 let pickedFiles = [];   // [{name, displayName, bytes}] name is unique in the sandbox
 let consolidated   = [];  // unified ledger rows (one per document)
 let dashboard      = [];  // head × DocKind × FY summary rows
@@ -26,6 +20,7 @@ let activeMode      = "auto";
 let activeOcrWorker = null;
 let rejectActiveOcr = null;
 let ocrCancelRequested = false;
+let ocrSidecars = new Map();
 
 // ---- dom ----
 const $ = (s) => document.querySelector(s);
@@ -336,22 +331,73 @@ function diagDone() {
   setTimeout(() => { diagEl.hidden = true; }, 1500);
 }
 
-// ---- boot Pyodide ----
-async function fetchBinary(url, what) {
-  let res;
-  try {
-    res = await fetch(url);
-  } catch (e) {
-    throw new Error(`Could not fetch ${what} (${url}). ` +
-      (location.protocol === "file:"
-        ? "This page was opened from the filesystem — browsers block fetch() on file:// pages. Serve the folder over HTTP (e.g. `python -m http.server`) and open http://localhost instead."
-        : "Check the network connection and that the file is deployed alongside index.html."));
-  }
-  if (!res.ok) {
-    throw new Error(`Server returned ${res.status} for ${what} (${url}). ` +
-      "If this is a custom web server (e.g. IIS), make sure it serves .zip, .whl, .wasm and .json files.");
-  }
-  return res.arrayBuffer();
+// ---- parser worker: Pyodide stays off the UI thread ----
+function failWorkerRequests(message) {
+  for (const request of workerRequests.values()) request.reject(new Error(message));
+  workerRequests.clear();
+}
+
+function engineRequest(action, payload, transfer = []) {
+  if (!engineWorker) return Promise.reject(new Error("The local engine is not available."));
+  const id = ++workerRequestId;
+  return new Promise((resolve, reject) => {
+    workerRequests.set(id, { resolve, reject });
+    engineWorker.postMessage({ id, action, payload }, transfer);
+  });
+}
+
+function startEngineWorker() {
+  return new Promise((resolve, reject) => {
+    engineWorker = new Worker("./engine.worker.js");
+    let bootSettled = false;
+    const failBoot = (message) => {
+      failWorkerRequests(message);
+      if (!bootSettled) {
+        bootSettled = true;
+        reject(new Error(message));
+      } else {
+        ready = false;
+        maybeEnableRun();
+        setStatus("The background parser stopped. Refresh the page to restart it.", "err");
+        log(`ENGINE ERROR:\n${message}`);
+      }
+    };
+    engineWorker.addEventListener("error", (event) => {
+      failBoot(event.message || "The background parser stopped unexpectedly.");
+    });
+    engineWorker.addEventListener("message", (event) => {
+      const message = event.data || {};
+      if (message.type === "boot-progress") {
+        diagStart(message.step);
+        setStatus(message.status, "busy");
+        return;
+      }
+      if (message.type === "boot-error") {
+        failBoot(message.error || "The background parser could not start.");
+        return;
+      }
+      if (message.type === "ready") {
+        if (!bootSettled) {
+          bootSettled = true;
+          resolve();
+        }
+        return;
+      }
+      if (message.type === "progress") {
+        const detail = message.detail || message.step || "Working";
+        setStatus(`Processing - ${detail}`, "busy");
+        log(`  [${message.step}] ${message.detail || ""}`);
+        return;
+      }
+      if (message.type === "response") {
+        const request = workerRequests.get(message.id);
+        if (!request) return;
+        workerRequests.delete(message.id);
+        if (message.ok) request.resolve(message.value);
+        else request.reject(new Error(message.error || "The background parser failed."));
+      }
+    });
+  });
 }
 
 async function boot() {
@@ -365,38 +411,17 @@ async function boot() {
     if (typeof WebAssembly === "undefined") {
       throw new Error("This browser does not support WebAssembly. Use a current version of Chrome, Edge, Firefox or Safari.");
     }
-    if (typeof loadPyodide === "undefined") {
-      throw new Error("pyodide.js did not load. Check that the pyodide/ folder is deployed next to index.html " +
-        "and that no extension or content-security policy is blocking scripts.");
+    if (typeof Worker === "undefined") {
+      throw new Error("This browser does not support background workers. Use a current version of Chrome, Edge, Firefox or Safari.");
     }
-
-    step = 1; diagStart(step);
-    setStatus("Loading Python runtime…", "busy");
-    pyodide = await loadPyodide({ indexURL: PYODIDE_INDEX });
-
-    step = 2; diagStart(step);
-    setStatus("Loading data libraries…", "busy");
-    await pyodide.loadPackage(["micropip", "Pillow", "cryptography", "pandas"]);
-
-    step = 3; diagStart(step);
-    setStatus("Installing PDF engine…", "busy");
-    pyodide.globals.set("wheel_list", LOCAL_WHEELS);
-    await pyodide.runPythonAsync(`
-import micropip
-await micropip.install(list(wheel_list), deps=False)
-    `);
-
-    step = 4; diagStart(step);
-    setStatus("Loading return engine…", "busy");
-    const zipBuf = await fetchBinary(ENGINE_ZIP, "the return engine");
-    await pyodide.unpackArchive(zipBuf, "zip");
-    await pyodide.runPythonAsync("import web_bootstrap");
+    await startEngineWorker();
 
     ready = true;
     diagDone();
     setStatus("Ready — 100% offline, nothing leaves this device.", "ok");
     maybeEnableRun();
   } catch (e) {
+    step = Math.max(0, diagCurrent);
     diagFail(step, e.message);
     setStatus(
       location.protocol === "file:"
@@ -438,22 +463,39 @@ async function loadPdfRenderer() {
   return pdfjsPromise;
 }
 
+async function findScannedFiles() {
+  const pdfjs = await loadPdfRenderer();
+  const scanned = [];
+  for (let index = 0; index < pickedFiles.length; index += 1) {
+    const file = pickedFiles[index];
+    setStatus(`Checking text layer ${index + 1}/${pickedFiles.length} - ${displayFileName(file)}`, "busy");
+    const task = pdfjs.getDocument({ data: file.bytes.slice() });
+    let pdfDocument = null;
+    let page = null;
+    try {
+      pdfDocument = await task.promise;
+      page = await pdfDocument.getPage(1);
+      const content = await page.getTextContent();
+      const text = content.items.map((item) => item.str || "").join(" ").trim();
+      if (text.length < 20) scanned.push(file);
+    } catch (error) {
+      log(`  [PREFLIGHT] Could not inspect ${displayFileName(file)}; the parser will check it. ${error.message || error}`);
+    } finally {
+      if (page) page.cleanup();
+      if (pdfDocument) await pdfDocument.destroy();
+      await yieldToBrowser();
+    }
+  }
+  return scanned;
+}
+
 class OcrCancelledError extends Error {}
 
 const yieldToBrowser = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 async function classifyOcrProbe(text) {
   if (activeMode !== "auto") return { accepted: false, ocr_policy: "full" };
-  pyodide.globals.set("ocr_probe_text", text);
-  try {
-    const resultJson = await pyodide.runPythonAsync(`
-import web_bootstrap, json
-json.dumps(web_bootstrap.classify_ocr_probe(str(ocr_probe_text)))
-    `);
-    return JSON.parse(resultJson);
-  } finally {
-    pyodide.globals.delete("ocr_probe_text");
-  }
+  return engineRequest("classify", { text });
 }
 
 async function recognizePdfPage(pdfDocument, worker, file, pageNo, options = {}) {
@@ -539,7 +581,7 @@ async function runLocalOcr(files) {
         log(`  [OCR] No usable text found: ${displayFileName(file)}`);
         continue;
       }
-      pyodide.FS.writeFile(`/work/in/${file.name}.ocr.txt`, new TextEncoder().encode(text));
+      ocrSidecars.set(file.name, text);
     }
   } finally {
     if (activeOcrWorker === worker) activeOcrWorker = null;
@@ -591,13 +633,16 @@ cancelOcrBtn.addEventListener("click", () => {
 });
 
 async function runEngine() {
-  pyodide.globals.set("run_kind", activeMode);
-  const resultJson = await pyodide.runPythonAsync(`
-import web_bootstrap, json
-result = web_bootstrap.run(str(run_kind), "/work/in", "/work/out", progress_cb=progress_cb)
-json.dumps(result)
-  `);
-  return JSON.parse(resultJson);
+  const files = pickedFiles.map((file) => ({
+    name: file.name,
+    bytes: file.bytes.slice().buffer,
+  }));
+  const ocrPayload = [...ocrSidecars].map(([name, text]) => ({ name, text }));
+  return engineRequest("run", {
+    kind: activeMode,
+    files,
+    ocrSidecars: ocrPayload,
+  }, files.map((file) => file.bytes));
 }
 
 runBtn.addEventListener("click", async () => {
@@ -613,25 +658,24 @@ runBtn.addEventListener("click", async () => {
   exportWorkbook.setAttribute("aria-disabled", "true");
   resultsEl.innerHTML = "";
   logEl.textContent = "";
+  ocrSidecars = new Map();
   setStatus("Processing…", "busy");
 
   try {
-    const FS = pyodide.FS;
-    await pyodide.runPythonAsync(`
-import shutil, os
-for d in ("/work/in", "/work/out"):
-    if os.path.isdir(d): shutil.rmtree(d)
-    os.makedirs(d, exist_ok=True)
-    `);
-    for (const f of pickedFiles) FS.writeFile("/work/in/" + f.name, f.bytes);
+    if (ocrEnabled.checked) {
+      const scannedFiles = await findScannedFiles();
+      if (scannedFiles.length) {
+        log(`  [PREFLIGHT] ${scannedFiles.length} scanned PDF(s) found from page 1. Running local OCR before parsing.`);
+        await ocrScannedFiles(scannedFiles.map((file) => ({ File: file.name, Type: "NeedsOCR" })));
+      }
+    }
+
     log(`${pickedFiles.length} PDF(s) written to sandbox. ${
       activeMode === "bank" ? "Identifying bank layouts and checking balances" : "Auto-detecting return types"
     }…`);
 
-    const progress = (step, detail) => log(`  [${step}] ${detail || ""}`);
-    pyodide.globals.set("progress_cb", progress);
-
-    let result = await runEngine();
+    let workerResult = await runEngine();
+    let result = workerResult.result;
     const initialErrors = (result.errors || []).map((error) => ({
       File: error.File, Type: error.Error_Type, Message: error.Message, Action: error.Action,
     }));
@@ -639,7 +683,8 @@ for d in ("/work/in", "/work/out"):
       setStatus("Reading scanned PDFs locally...", "busy");
       await ocrScannedFiles(initialErrors);
       log("  [OCR] Re-running the parser with local OCR text.");
-      result = await runEngine();
+      workerResult = await runEngine();
+      result = workerResult.result;
     }
     runStamp = newRunStamp();
 
@@ -652,8 +697,8 @@ for d in ("/work/in", "/work/out"):
     reviews        = result.reviews || [];
 
     // one Excel workbook — the sole deliverable
-    if (result.workbook) {
-      addWorkbookResult(FS.readFile(result.workbook), result.workbook_name || "Statutory_Returns.xlsx", consolidated.length);
+    if (result.workbook && workerResult.workbookBytes) {
+      addWorkbookResult(new Uint8Array(workerResult.workbookBytes), result.workbook_name || "Statutory_Returns.xlsx", consolidated.length);
     }
 
     // tag each picked file with its detected head / kind / outcome

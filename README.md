@@ -15,7 +15,8 @@ Drop your PDFs → the engine auto-detects each return type → read the dashboa
 ## Why it's safe for client data
 
 Everything runs **client-side** via [Pyodide](https://pyodide.org) (Python compiled to
-WebAssembly). Your PDFs are parsed in an in-memory sandbox and never sent anywhere.
+WebAssembly) in a background worker. Your PDFs are parsed in an in-memory sandbox and
+never sent anywhere, while the page stays responsive during large batches.
 
 The whole app (Python runtime, libraries, fonts) is **vendored locally**, so once the page
 loads it makes **zero network calls** — open DevTools → Network and watch it stay empty
@@ -113,10 +114,12 @@ failure is a one-line diagnosis, not a guess.
 
 ```
 PDFs (in browser)
-  → Pyodide writes them to an in-memory filesystem
-  → run_unified_pipeline auto-detects each return type and parses it
+  → app.js checks page 1 for scanned files and runs local OCR when needed
+  → engine.worker.js gives PDF bytes to Pyodide's in-memory filesystem
+  → the worker auto-detects each return type and parses it
      (pdfplumber → pandas → sanity checks → normalized CSVs)
-  → app.js reads the CSVs back and renders the dashboard + downloads
+  → the worker returns structured results + workbook bytes to app.js
+  → app.js renders the dashboard and local download
 ```
 
 The browser engine is `web_app/engine/` (a Pyodide-friendly build of the parser package);
@@ -130,7 +133,8 @@ engine file, rebuild `engine.zip` (Python `zipfile`, forward-slash arcnames, roo
 ```
 web_app/             # the browser app (deployed to Pages)
   index.html         #   UI (+ noscript / old-browser guards)
-  app.js             #   Pyodide glue (boot, diagnostics, run, render, download)
+  app.js             #   UI, OCR, worker bridge, render, download
+  engine.worker.js   #   background Pyodide parser
   sw.js              #   service worker — offline cache of the runtime
   themes/workspace.css # the theme
   fonts/             #   vendored woff2 (Spectral + Hanken Grotesk)

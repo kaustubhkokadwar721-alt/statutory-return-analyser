@@ -109,9 +109,21 @@ HANDLERS = (
 
 def preflight_pdf(pdf) -> dict:
     """Inspect a PDF without retaining its text outside the current run."""
-    page_text = [(page.extract_text() or "").strip() for page in pdf.pages]
+    pages = len(pdf.pages)
+    first_text = (pdf.pages[0].extract_text() or "").strip() if pages else ""
+    if pages and len(first_text) < 20:
+        return {
+            "pages": pages,
+            "text": first_text,
+            "page_text": [first_text],
+            "needs_ocr": True,
+            "sparse_text": True,
+            "ocr_used": False,
+        }
+
+    page_text = [first_text]
+    page_text.extend((page.extract_text() or "").strip() for page in pdf.pages[1:])
     chars = sum(len(text) for text in page_text)
-    pages = len(page_text)
     return {
         "pages": pages,
         "text": "\n".join(page_text),
