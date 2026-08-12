@@ -1,6 +1,6 @@
 # Statutory Return Analyser
 
-Turn statutory-return PDFs — **GSTR-1, GSTR-3B, TDS (ITNS-281), PF ECR, ESIC, PTRC,
+Turn statutory-return PDFs — **GSTR-1, GSTR-3B, TDS (ITNS-281 and Form 16A), PF ECR, ESIC, PTRC,
 and ICEGATE Shipping Bills** — into clean, verified CSV ledgers with a compliance
 overview, **entirely in your browser**. No upload, no server, no install.
 
@@ -31,7 +31,7 @@ the network cable after one load and it still parses).
 
 ## What you get
 
-Drop any mix of the seven document types. The engine detects each one and produces:
+Drop any mix of the ten document types. The engine detects each one and produces:
 
 | Output | Contents |
 |--------|----------|
@@ -39,13 +39,14 @@ Drop any mix of the seven document types. The engine detects each one and produc
 | **All_Returns_Consolidated.csv** | Every return on one normalized schema — pivot / SUMIFS ready |
 | **Dashboard_Summary.csv** | Filing counts, pass rates, and totals grouped by return type and FY |
 | **`<type>`_Details.csv** | Full parsed fields per return type |
+| **TDS16A_Payments / Deposits / Checks** | Form 16A transaction rows, government-deposit rows, and every reconciliation check |
 | **GSTR 3B** | One row per return with outward supplies, RCM, ITC, credit utilisation, payable tax, interest, late fees, and source traceability |
 | **SB_Items.csv** | Shipping-bill line items — HS code, description, quantity, rate, FOB — one row per item across all bills |
 
 Each row carries a **Status** (OK / Review / Error), the **Flags** that triggered it, the
 headline amount, plus traceability metadata: source filename, document reference
 (ARN / challan / TRRN / SB number), and filing date. Sanity checks include GSTR-3B
-RCM cross-checks and CGST/SGST symmetry, TDS component tie-outs, PF contribution
+RCM cross-checks and CGST/SGST symmetry, TDS component tie-outs, Form 16A payment/deposit/verification reconciliations, PF contribution
 reconciliation, and PTRC period validation. PTRC also breaks out the salary-slab
 particulars where the form version prints them.
 
@@ -56,8 +57,15 @@ shows **OK** when its own arithmetic ties out. Scanned (image-only) shipping bil
 skipped, even after local OCR identifies them, because their tables and claim values
 cannot be verified safely.
 
+Form 16A support is native-PDF only: it extracts the certificate parties and period,
+payment lines, quarterly TDS summary, book-adjustment/challan deposits, verification,
+and serial/amount/date controls. Image-only or OCR-derived Form 16A files are rejected
+because OCR cannot preserve the ruled financial tables reliably.
+
 For image-only PDFs, OCR starts with page one. If that probe confidently identifies
-a Shipping Bill, the remaining pages are skipped immediately. Other document types
+a Shipping Bill, the remaining pages are skipped immediately. Scanned Form 16A
+certificates are also identified early, but require the original digital PDF so their
+tables and verification details can be extracted reliably. Other document types
 continue through full local OCR, using the already-read first page.
 
 ## Design

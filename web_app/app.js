@@ -187,7 +187,7 @@ TABS.forEach(({ tab }, i) => {
 const TYPE_META = {
   GSTR1:  { icon: "i-gstr1",  cls: "t-gstr1",  label: "GSTR-1" },
   GSTR3B: { icon: "i-gstr3b", cls: "t-gstr3b", label: "GSTR-3B" },
-  TDS:    { icon: "i-tds",    cls: "t-tds",    label: "TDS" },
+  TDS:    { icon: "i-tds",    cls: "t-tds",    label: "TDS Challan" },
   PF:     { icon: "i-pf",     cls: "t-pf",     label: "PF" },
   ESIC:   { icon: "i-esic",   cls: "t-esic",   label: "ESIC" },
   PTRC:   { icon: "i-ptrc",   cls: "t-ptrc",   label: "PTRC" },
@@ -197,8 +197,14 @@ const TYPE_META = {
   BANK:   { icon: "i-bank",   cls: "t-bank",   label: "Bank" },
   FD:     { icon: "i-fd",     cls: "t-fd",     label: "Fixed Deposit" },
 };
-function typeCell(rt) {
-  const m = TYPE_META[rt];
+function documentMeta(rt, kind = "") {
+  if (rt === "TDS" && kind === "Certificate") {
+    return { ...TYPE_META.TDS, label: "Form 16A" };
+  }
+  return TYPE_META[rt];
+}
+function typeCell(rt, kind = "") {
+  const m = documentMeta(rt, kind);
   if (!m) return esc(rt);
   return `<span class="tcell ${m.cls}"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#${m.icon}"/></svg>${m.label}</span>`;
 }
@@ -228,13 +234,13 @@ function setMode(mode) {
   document.getElementById("bankingTypes").hidden = mode !== "bank";
   document.getElementById("dropHelp").textContent = mode === "bank"
     ? "bank, loan and fixed-deposit PDFs · or click to browse"
-    : "any mix of the nine types · or click to browse";
+    : "any mix of the ten types · or click to browse";
   document.getElementById("runHint").textContent = mode === "bank"
     ? "Checks every statement against its balances"
-    : "Auto-detects each document’s type";
+    : "Auto-detects each document’s type · Form 16A needs the original digital PDF";
   ocrEnabled.parentElement.title = mode === "bank"
     ? "Runs local OCR in this browser. Scanned bank tables stay review-only unless their row structure is clear."
-    : "Runs the bundled OCR engine in this browser only.";
+    : "Runs OCR in this browser only. Form 16A requires the original digital PDF; scanned copies are identified but not parsed.";
   fileTags = {};
   consolidated = []; dashboard = []; reconciliation = []; parseErrors = []; reviews = [];
   resultsTab.hidden = true;
@@ -313,13 +319,15 @@ function renderFiles() {
     const t = fileTags[f.name];
     if (!t) continue;
     if (t.status === "unreadable") { unreadable++; continue; }
-    byType[t.type] = (byType[t.type] || 0) + 1;
+    const identity = `${t.type}|${t.kind || ""}`;
+    byType[identity] = (byType[identity] || 0) + 1;
     if (t.status && t.status !== "OK") review++;
   }
   let chipHtml = Object.entries(byType)
     .sort((a, b) => b[1] - a[1])
-    .map(([ty, n]) => {
-      const m = TYPE_META[ty];
+    .map(([identity, n]) => {
+      const [ty, kind] = identity.split("|");
+      const m = documentMeta(ty, kind);
       return `<span class="fchip ${m ? m.cls : ""}">${n} ${esc(m ? m.label : ty)}</span>`;
     }).join("");
   if (review)     chipHtml += `<span class="fchip review">${review} review</span>`;
@@ -338,7 +346,7 @@ function renderFiles() {
         tagHtml = '<span class="ftag err">Unknown</span>';
         statusHtml = '<span class="file-status review">Needs review</span>';
       } else {
-        const m = TYPE_META[tag.type];
+        const m = documentMeta(tag.type, tag.kind);
         const ic = m ? `<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#${m.icon}"/></svg>` : "";
         tagHtml = `<span class="ftag ${m ? m.cls : ""}">${ic}${esc(m ? m.label : tag.type)}</span>`;
         const statusClass = tag.status === "OK" ? "ok" : "review";
@@ -724,19 +732,23 @@ async function runLocalOcr(files) {
         });
         let firstPageText = quickText;
         let probe = await classifyOcrProbe(quickText);
-        let identifyOnly = probe.accepted && probe.ocr_policy === "identify_then_skip";
-        if (!identifyOnly) {
+        let stopAfterFirstPage = probe.accepted && ["identify_then_skip", "native_only"].includes(probe.ocr_policy);
+        if (!stopAfterFirstPage) {
           firstPageText = await recognizePdfPage(pdfDocument, worker, file, 1, {
             fileIndex: index,
             fileCount: files.length,
           });
           probe = await classifyOcrProbe(firstPageText);
-          identifyOnly = probe.accepted && probe.ocr_policy === "identify_then_skip";
+          stopAfterFirstPage = probe.accepted && ["identify_then_skip", "native_only"].includes(probe.ocr_policy);
         }
         pageText.push(firstPageText);
-        if (identifyOnly) {
+        if (stopAfterFirstPage) {
           const skipped = Math.max(0, pdfDocument.numPages - 1);
-          log(`  [OCR] Scanned Shipping Bill identified from page 1; skipped ${skipped} remaining page(s).`);
+          if (probe.ocr_policy === "native_only") {
+            log(`  [OCR] Scanned Form 16A identified from page 1; skipped ${skipped} remaining page(s). Use the original digital PDF.`);
+          } else {
+            log(`  [OCR] Scanned Shipping Bill identified from page 1; skipped ${skipped} remaining page(s).`);
+          }
         } else {
           for (let pageNo = 2; pageNo <= pdfDocument.numPages; pageNo += 1) {
             pageText.push(await recognizePdfPage(pdfDocument, worker, file, pageNo, {
@@ -1041,7 +1053,7 @@ function dashTableHTML() {
   if (!dashboard.length) return "";
   const head = ["Head", "Document", "FY", "Docs", "OK", "Review", "Err", "Periods", "Amount ₹"];
   const body = dashboard.map((d) => `<tr>
-      <td>${typeCell(d.ReturnType)}</td>
+      <td>${typeCell(d.ReturnType, d.DocKind)}</td>
       <td>${kindCell(d.DocKind)}</td>
       <td>${esc(d.FY)}</td>
       <td class="num">${d.Records}</td>
@@ -1102,7 +1114,7 @@ function renderRecords() {
     const st = (r.Status || "").toLowerCase();
     return `<tr>
       <td><span class="pill ${st}">${esc(r.Status)}</span></td>
-      <td>${typeCell(r.ReturnType)}</td>
+      <td>${typeCell(r.ReturnType, r.DocKind)}</td>
       <td>${kindCell(r.DocKind)}</td>
       <td class="ell" title="${esc(r.EntityName)} (${esc(r.EntityID)})">${esc(r.EntityID)}</td>
       <td>${esc(r.FY)}</td>
@@ -1136,6 +1148,7 @@ function renderBadFiles() {
   const labels = {
     NeedsOCR: "Needs OCR", NeedsStructuredOCR: "Needs structured OCR",
     ScannedShippingBill: "Scanned shipping bill (skipped)",
+    NativeTextRequired: "Original digital PDF required",
     MixedDocument: "Mixed document", AmbiguousType: "Needs review", UnknownType: "Unknown type",
     EncryptedPDF: "Password protected", UnsupportedDocument: "Different document",
     UnknownBankLayout: "Unknown bank layout",
@@ -1164,7 +1177,7 @@ function renderReviews() {
       "<tr><td colspan=\"4\">No field evidence recorded.</td></tr>";
     return `<details class="review-detail" data-review-source="${esc(review.SourceFile)}">
       <summary><span class="pill review">${esc(review.Status || "Review")}</span> ${esc(review.SourceFile)} - ${esc(review.ConfidenceGrade || "Low")} audit score (${esc(review.Confidence ?? "-")}/100)</summary>
-      <div class="review-meta">${esc(review.ReturnType)} / ${esc(review.DocKind)} / profile ${esc(review.ProfileVersion)}</div>
+      <div class="review-meta">${esc(documentMeta(review.ReturnType, review.DocKind)?.label || review.ReturnType)} / ${esc(review.DocKind)} / profile ${esc(review.ProfileVersion)}</div>
       <ul>${findings}</ul>
       <table class="tbl"><thead><tr><th>Field</th><th>Extracted value</th><th>Method</th><th>Page</th></tr></thead><tbody>${evidence}</tbody></table>
     </details>`;
@@ -1226,7 +1239,7 @@ function renderReconciliation() {
   const body = rows.map((r) => {
     const cls = r.Status === "Matched" ? "ok" : "error";
     return `<tr>
-      <td>${typeCell(r.ReturnType)}</td>
+      <td>${typeCell(r.ReturnType, r.DocKind)}</td>
       <td>${esc(r.PeriodDate ? r.PeriodDate.slice(0, 7) : "—")}</td>
       <td class="num${Number(r.Docs) > 1 ? " rev" : ""}">${esc(r.Docs)}</td>
       <td class="num">${money(r.Declared)}</td>

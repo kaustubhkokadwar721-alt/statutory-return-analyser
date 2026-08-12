@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Statutory Return Extractor</title>
-<meta name="description" content="Parse GSTR-1, GSTR-3B, TDS, PF, ESIC, PTRC and ICEGATE Shipping Bill PDFs into clean, verified CSV ledgers, entirely in your browser.">
+<meta name="description" content="Parse GSTR-1, GSTR-3B, TDS challan, Form 16A, PF ECR, ESIC, PTRC, Shipping Bill, eBRC and e-Way Bill PDFs into a verified workbook, entirely in your browser.">
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="themes/workspace.css">
 </head>
@@ -162,7 +162,7 @@
           <p>Add PDFs, then run the local analyser.</p>
         </div>
         <div class="view-actions">
-          <label class="ocr-toggle" title="Runs OCR on this device. Scanned Shipping Bills are identified and skipped because their detailed values cannot be verified safely.">
+          <label class="ocr-toggle" title="Runs OCR on this device. Scanned Shipping Bills are identified and skipped; Form 16A requires the original digital PDF.">
             <input type="checkbox" id="ocrEnabled" checked> OCR scanned PDFs
           </label>
           <button class="btn secondary" id="addFiles" type="button">
@@ -203,7 +203,7 @@
       <div class="supported-row">
         <span class="supported-label">Supported</span>
         <ul class="types" id="statutoryTypes" aria-label="Statutory document types handled">
-          <li class="type">GSTR-1</li><li class="type">GSTR-3B</li><li class="type">TDS</li>
+          <li class="type">GSTR-1</li><li class="type">GSTR-3B</li><li class="type">TDS Challan</li><li class="type" title="Original digital PDF required; scanned copies are not parsed.">Form 16A</li>
           <li class="type">PF ECR</li><li class="type">ESIC</li><li class="type">PTRC</li>
           <li class="type">Shipping Bill</li><li class="type">eBRC</li><li class="type">e-Way Bill</li>
         </ul>
@@ -215,11 +215,11 @@
       <div id="drop" class="drop" role="button" tabindex="0" aria-label="Drop PDFs here or press Enter to browse">
         <span class="drop-ic"><svg viewBox="0 0 24 24"><use href="#i-upload"/></svg></span>
         <div class="drop-big">Drop PDFs here</div>
-        <div class="drop-small" id="dropHelp">any mix of the nine types, or click to browse</div>
+        <div class="drop-small" id="dropHelp">any mix of the ten types, or click to browse</div>
         <input type="file" id="picker" accept="application/pdf" multiple hidden>
       </div>
 
-      <span class="run-hint" id="runHint">Auto-detects each document's type</span>
+      <span class="run-hint" id="runHint">Auto-detects each document's type · Form 16A needs the original digital PDF</span>
       <div class="queue-head" id="filesBar"></div>
       <div id="fileChips" class="fchips"></div>
       <div class="files-table" id="filesTable">

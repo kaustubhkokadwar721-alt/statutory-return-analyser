@@ -43,6 +43,23 @@ class WorkerAssetTests(unittest.TestCase):
         self.assertIn('engineRequest("combine"', app)
         self.assertIn('action === "combine"', worker)
 
+    def test_form16a_is_presented_as_a_distinct_supported_document(self):
+        app = (WEB / "app.js").read_text(encoding="utf-8")
+        index = (WEB / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('<li class="type">TDS Challan</li>', index)
+        self.assertIn('>Form 16A</li>', index)
+        self.assertIn("any mix of the ten types", index)
+        self.assertIn("Form 16A needs the original digital PDF", index)
+        self.assertIn('label: "Form 16A"', app)
+        self.assertIn('NativeTextRequired: "Original digital PDF required"', app)
+
+    def test_scanned_form16a_stops_after_identification(self):
+        app = (WEB / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('["identify_then_skip", "native_only"].includes(probe.ocr_policy)', app)
+        self.assertIn("Scanned Form 16A identified from page 1", app)
+
 
 if __name__ == "__main__":
     unittest.main()

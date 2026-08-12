@@ -9,6 +9,7 @@ from .compliance_parsers import (
     parse_ebrc, parse_ewb, parse_pf, parse_pf_arrears, parse_pf_ecr,
     parse_pf_payment, parse_ptrc, parse_ptrc_challan, parse_tds,
 )
+from .form16a import parse_form16a
 
 
 @dataclass(frozen=True)
@@ -55,13 +56,16 @@ def _parse_ptrc(pdf, fname: str, doc_kind: str) -> dict:
     return parse_ptrc_challan(pdf, fname) if doc_kind == "Challan" else parse_ptrc(pdf, fname)
 
 
-def _parse_tds(pdf, fname: str, _doc_kind: str) -> dict:
-    result = parse_tds(pdf, fname)
-    result["PrimaryAmount"] = result.get("Total Amount Paid", 0)
+def _parse_tds(pdf, fname: str, doc_kind: str) -> dict:
+    result = parse_form16a(pdf, fname) if doc_kind == "Certificate" else parse_tds(pdf, fname)
+    result["PrimaryAmount"] = result.get("PrimaryAmount", result.get("Total Amount Paid", 0))
     return result
 
 
 def _validate_tds(result: dict) -> list[str]:
+    if result.get("DocKind") == "Certificate":
+        return list(result.get("Validation Flags") or [])
+
     flags = []
     if result.get("EntityID") in ("Unknown", ""):
         flags.append("PAN?" if result.get("Taxpayer ID Type") == "PAN" else "TAN?")
