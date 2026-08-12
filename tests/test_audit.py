@@ -66,6 +66,13 @@ class AuditTests(unittest.TestCase):
         self.assertTrue(result["accepted"])
         self.assertEqual(result["ocr_policy"], "identify_then_skip")
 
+    def test_form16a_probe_is_classified_but_requires_native_text(self):
+        result = classify_ocr_probe("FORM NO. 16A Certificate under section 203")
+        self.assertTrue(result["accepted"])
+        self.assertEqual(result["return_type"], "TDS")
+        self.assertEqual(result["doc_kind"], "Certificate")
+        self.assertEqual(result["ocr_policy"], "native_only")
+
     def test_missing_required_field_cannot_be_ok(self):
         classification = classify_document("GSTR-1 GSTIN of the supplier")
         preflight = preflight_pdf(_Pdf("GSTR-1 GSTIN of the supplier"))

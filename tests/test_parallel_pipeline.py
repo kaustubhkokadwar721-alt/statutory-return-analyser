@@ -36,7 +36,11 @@ def _record(source, return_type, amount, reference):
 
 
 def _shard(record, detail_key):
-    raw = {key: [] for key in ("GSTR1", "ESIC", "PF", "PTRC", "TDS", "SB", "EBRC", "EWB")}
+    raw = {key: [] for key in (
+        "GSTR1", "ESIC", "PF", "PTRC", "TDS", "TDS16A_Payments",
+        "TDS16A_Deposits", "TDS16A_Checks", "TDS16A_Exceptions",
+        "SB", "EBRC", "EWB",
+    )}
     raw[detail_key].append({"SourceFile": record["SourceFile"], "Value": record["PrimaryAmount"]})
     return {
         "consolidated": [record],

@@ -26,6 +26,13 @@ from .handler_registry import REGISTERED_HANDLERS, run_registered
 from .ocr import OCRTextPdf, read_ocr_sidecar
 
 
+DETAIL_KEYS = (
+    "GSTR1", "ESIC", "PF", "PTRC", "TDS", "TDS16A_Payments",
+    "TDS16A_Deposits", "TDS16A_Checks", "TDS16A_Exceptions",
+    "SB", "EBRC", "EWB",
+)
+
+
 # ── Return-type detection ─────────────────────────────────────────────────────
 
 # ── Helper ────────────────────────────────────────────────────────────────────
@@ -75,7 +82,7 @@ def _consolidated_row(res: dict, fname: str, flags_list: list, status: str | Non
         pass
     if status is None:
         status = "Review" if flags_list else "OK"
-    return {
+    row = {
         "ReturnType":    res.get("ReturnType"),
         "DocKind":       res.get("DocKind", "Return"),
         "EntityID":      res.get("EntityID", ""),
@@ -91,6 +98,10 @@ def _consolidated_row(res: dict, fname: str, flags_list: list, status: str | Non
         "FilingDate":    res.get("FilingDate", None),
         "SourceFile":    fname,
     }
+    for field in ("CounterpartyID", "CounterpartyName", "Quarter"):
+        if field in res:
+            row[field] = res[field]
+    return row
 
 
 # ── Reconciliation ────────────────────────────────────────────────────────────
@@ -333,7 +344,7 @@ def combine_shard_results(
 
     records = []
     errors = []
-    raw_details = {k: [] for k in ("GSTR1", "ESIC", "PF", "PTRC", "TDS", "SB", "EBRC", "EWB")}
+    raw_details = {key: [] for key in DETAIL_KEYS}
     gstr3b_analysis = []
     sb_items = []
     finding_rows = []
@@ -386,7 +397,7 @@ def run_unified_pipeline(
     records = []          # unified contract rows
     errors  = []          # failed files
     audit_contexts = {}   # source file -> (preflight, classification), current run only
-    raw_details = {k: [] for k in ("GSTR1", "ESIC", "PF", "PTRC", "TDS", "SB", "EBRC", "EWB")}
+    raw_details = {key: [] for key in DETAIL_KEYS}
     gstr3b_analysis = []
     sb_items = []         # shipping-bill line items (separate ledger)
 
@@ -443,6 +454,14 @@ def run_unified_pipeline(
                 winner = classification["winner"]
                 return_type, doc_kind = winner["return_type"], winner["doc_kind"]
                 audit_contexts[fname] = (preflight, classification)
+
+                if preflight["ocr_used"] and winner["handler"].ocr_policy == "native_only":
+                    errors.append({
+                        "File": fname, "Error_Type": "NativeTextRequired",
+                        "Message": f"{doc_kind} parsing requires the original digital PDF; OCR is not supported.",
+                        "Action": "Use the native PDF downloaded from the issuing portal.",
+                    })
+                    continue
 
                 if preflight["ocr_used"] and return_type == "SB":
                     errors.append({
@@ -579,6 +598,15 @@ def run_unified_pipeline(
                         return_type, parse_pdf, fname, doc_kind, _consolidated_row
                     )
                     records.append(record)
+                    if return_type == "TDS" and doc_kind == "Certificate":
+                        for target, field in (
+                            ("TDS16A_Payments", "Payments"),
+                            ("TDS16A_Deposits", "Deposits"),
+                            ("TDS16A_Checks", "Validation Checks"),
+                            ("TDS16A_Exceptions", "Exceptions"),
+                        ):
+                            raw_details[target].extend(detail.pop(field, []) or [])
+                        detail["Validation Flags"] = "; ".join(detail.get("Validation Flags") or [])
                     raw_details[return_type].append(detail)
 
                 # ── PTRC (FORM_IIIB Return / MTR-6 Challan) ────────────────

@@ -89,9 +89,26 @@ def _ptrc(text: str):
 
 
 def _tds(text: str):
+    # Form 16A contains generic TDS/TAN and Income Tax Department language too;
+    # its certificate-specific profile must own those documents exclusively.
+    if "FORM NO. 16A" in text or "FORM NO 16A" in text or "CERTIFICATE UNDER SECTION 203" in text:
+        return 0, "Challan", []
     hits = _has(text, "INCOME TAX DEPARTMENT", "CHALLAN RECEIPT", "TAN", "DATE OF DEPOSIT", "NATURE OF PAYMENT")
     score = 90 if ("INCOME TAX DEPARTMENT" in hits or "CHALLAN RECEIPT" in hits) and len(hits) >= 2 else 0
     return score, "Challan", hits
+
+
+def _form16a(text: str):
+    strong = _has(text, "FORM NO. 16A", "FORM NO 16A", "CERTIFICATE UNDER SECTION 203")
+    continuation = _has(
+        text, "CERTIFICATE NUMBER:", "TAN OF DEDUCTOR:",
+        "PAN OF DEDUCTEE:", "ASSESSMENT YEAR:",
+    )
+    if strong:
+        return 100, "Certificate", strong + continuation
+    if len(continuation) >= 3:
+        return 90, "Certificate", continuation
+    return 0, "Certificate", []
 
 
 HANDLERS = (
@@ -104,6 +121,8 @@ HANDLERS = (
     DocumentHandler("PF", "epfo-v1", ("EntityID", "PeriodDate", "DocRef"), _pf),
     DocumentHandler("ESIC", "esic-v1", ("EntityID", "PeriodDate", "DocRef"), _esic),
     DocumentHandler("PTRC", "ptrc-v1", ("EntityID", "PeriodDate", "DocRef"), _ptrc),
+    DocumentHandler("TDS", "tds-16a-v1", ("EntityID", "CounterpartyID", "PeriodDate", "DocRef"),
+                    _form16a, "native_only"),
     DocumentHandler("TDS", "itns-v1", ("EntityID", "PeriodDate", "DocRef"), _tds),
 )
 
