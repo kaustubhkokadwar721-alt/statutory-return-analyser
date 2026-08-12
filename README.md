@@ -31,7 +31,7 @@ the network cable after one load and it still parses).
 
 ## What you get
 
-Drop any mix of the seven document types. The engine detects each one and produces:
+Drop any mix of the ten document types. The engine detects each one and produces:
 
 | Output | Contents |
 |--------|----------|
@@ -63,7 +63,9 @@ and serial/amount/date controls. Image-only or OCR-derived Form 16A files are re
 because OCR cannot preserve the ruled financial tables reliably.
 
 For image-only PDFs, OCR starts with page one. If that probe confidently identifies
-a Shipping Bill, the remaining pages are skipped immediately. Other document types
+a Shipping Bill, the remaining pages are skipped immediately. Scanned Form 16A
+certificates are also identified early, but require the original digital PDF so their
+tables and verification details can be extracted reliably. Other document types
 continue through full local OCR, using the already-read first page.
 
 ## Design
