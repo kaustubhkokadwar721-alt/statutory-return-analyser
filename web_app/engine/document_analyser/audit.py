@@ -89,9 +89,11 @@ def _ptrc(text: str):
 
 
 def _tds(text: str):
-    # Form 16A contains generic TDS/TAN and Income Tax Department language too;
-    # its certificate-specific profile must own those documents exclusively.
-    if "FORM NO. 16A" in text or "FORM NO 16A" in text or "CERTIFICATE UNDER SECTION 203" in text:
+    # Specific TDS profiles must own their documents exclusively.
+    if any(marker in text for marker in (
+        "FORM NO. 16A", "FORM NO 16A", "CERTIFICATE UNDER SECTION 203",
+        "FORM NO. 27A", "FORM NO 27A", "ACKNOWLEDGEMENT RECEIPT OF",
+    )):
         return 0, "Challan", []
     hits = _has(text, "INCOME TAX DEPARTMENT", "CHALLAN RECEIPT", "TAN", "DATE OF DEPOSIT", "NATURE OF PAYMENT")
     score = 90 if ("INCOME TAX DEPARTMENT" in hits or "CHALLAN RECEIPT" in hits) and len(hits) >= 2 else 0
@@ -111,6 +113,19 @@ def _form16a(text: str):
     return 0, "Certificate", []
 
 
+def _form27a(text: str):
+    strong = _has(text, "FORM NO. 27A", "FORM NO 27A")
+    supporting = _has(text, "CONTROL TOTALS", "TAX DEDUCTION ACCOUNT NO.", "PREVIOUS RECEIPT NUMBER")
+    return (100 if strong and len(supporting) >= 2 else 0, "Form 27A", strong + supporting)
+
+
+def _form26q_receipt(text: str):
+    strong = _has(text, "ACKNOWLEDGEMENT RECEIPT OF", "FORM NO. : FORM 26Q")
+    supporting = _has(text, "E-FILING ACKNOWLEDGEMENT NUMBER", "RRR NUMBER", "QUARTER :")
+    return (100 if len(strong) == 2 and len(supporting) >= 2 else 0,
+            "Form 26Q Receipt", strong + supporting)
+
+
 HANDLERS = (
     DocumentHandler("SB", "icegate-v1", ("EntityID", "PeriodDate", "DocRef"),
                     _shipping_bill, "identify_then_skip"),
@@ -123,6 +138,10 @@ HANDLERS = (
     DocumentHandler("PTRC", "ptrc-v1", ("EntityID", "PeriodDate", "DocRef"), _ptrc),
     DocumentHandler("TDS", "tds-16a-v1", ("EntityID", "CounterpartyID", "PeriodDate", "DocRef"),
                     _form16a, "native_only"),
+    DocumentHandler("TDS", "tds-27a-v1", ("EntityID", "PeriodDate", "DocRef"),
+                    _form27a, "native_only"),
+    DocumentHandler("TDS", "tds-26q-receipt-v1", ("EntityID", "PeriodDate", "DocRef"),
+                    _form26q_receipt, "native_only"),
     DocumentHandler("TDS", "itns-v1", ("EntityID", "PeriodDate", "DocRef"), _tds),
 )
 
