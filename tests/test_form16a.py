@@ -8,7 +8,7 @@ ENGINE = Path(__file__).resolve().parents[1] / "web_app" / "engine"
 sys.path.insert(0, str(ENGINE))
 
 from document_analyser.audit import classify_document
-from document_analyser.form16a import parse_form16a
+from document_analyser.form16a import parse_form16a, parse_form16a_certificates
 from document_analyser import handler_registry
 from web_bootstrap import classify_ocr_probe
 
@@ -119,11 +119,43 @@ class Form16AParserTests(unittest.TestCase):
         self.assertIn("DEPOSITS_VS_QUARTERLY_SUMMARY", result["Validation Flags"])
         self.assertIn("VERIFICATION_TAX_DEPOSITED", result["Validation Flags"])
 
+    def test_parses_concatenated_certificate_bundle_independently(self):
+        first = _certificate()
+        second = _certificate()
+
+        results = parse_form16a_certificates(
+            _Pdf(*first.pages, *second.pages),
+            "quarterly-bundle.pdf",
+        )
+
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(result["Validation Status"] == "pass" for result in results))
+        self.assertEqual([result["Payment Count"] for result in results], [2, 2])
+        self.assertEqual([result["Deposit Count"] for result in results], [2, 2])
+
     def test_registry_dispatches_certificate_to_form16a_parser(self):
         expected = {"ReturnType": "TDS", "DocKind": "Certificate", "PrimaryAmount": 30}
         with patch.object(handler_registry, "parse_form16a", return_value=expected) as parser:
             self.assertIs(handler_registry._parse_tds(None, "synthetic.pdf", "Certificate"), expected)
         parser.assert_called_once_with(None, "synthetic.pdf")
+
+    def test_registry_emits_one_record_per_bundled_certificate(self):
+        first = _certificate()
+        second = _certificate()
+
+        pairs = handler_registry.run_registered_many(
+            "TDS",
+            _Pdf(*first.pages, *second.pages),
+            "quarterly-bundle.pdf",
+            "Certificate",
+            lambda result, _fname, flags: {
+                "certificate": result["Certificate No"],
+                "flags": flags,
+            },
+        )
+
+        self.assertEqual(len(pairs), 2)
+        self.assertTrue(all(not record["flags"] for record, _detail in pairs))
 
     def test_rejects_text_only_or_ocr_adapter(self):
         class TextPage:

@@ -201,6 +201,15 @@ function documentMeta(rt, kind = "") {
   if (rt === "TDS" && kind === "Certificate") {
     return { ...TYPE_META.TDS, label: "Form 16A" };
   }
+  if (rt === "TDS" && kind === "Form 27A") {
+    return { ...TYPE_META.TDS, label: "Form 27A" };
+  }
+  if (rt === "TDS" && kind === "Form 26Q Receipt") {
+    return { ...TYPE_META.TDS, label: "Form 26Q Receipt" };
+  }
+  if (rt === "TDS" && kind === "Statement Match") {
+    return { ...TYPE_META.TDS, label: "27A ↔ 26Q" };
+  }
   return TYPE_META[rt];
 }
 function typeCell(rt, kind = "") {
@@ -212,7 +221,8 @@ function typeCell(rt, kind = "") {
 // ---- document-kind badge: Return / Challan / Payment / Arrears ----
 const KIND_CLASS = {
   Return: "k-return", Challan: "k-challan", Payment: "k-payment", Arrears: "k-arrears",
-  Statement: "k-return", Certificate: "k-payment",
+  Statement: "k-return", Certificate: "k-payment", "Form 27A": "k-return",
+  "Form 26Q Receipt": "k-payment", "Statement Match": "k-return",
 };
 function kindCell(k) {
   if (!k) return "—";
@@ -234,13 +244,13 @@ function setMode(mode) {
   document.getElementById("bankingTypes").hidden = mode !== "bank";
   document.getElementById("dropHelp").textContent = mode === "bank"
     ? "bank, loan and fixed-deposit PDFs · or click to browse"
-    : "any mix of the ten types · or click to browse";
+    : "any mix of the twelve types · or click to browse";
   document.getElementById("runHint").textContent = mode === "bank"
     ? "Checks every statement against its balances"
-    : "Auto-detects each document’s type · Form 16A needs the original digital PDF";
+    : "Auto-detects each document’s type · TDS forms need original digital PDFs";
   ocrEnabled.parentElement.title = mode === "bank"
     ? "Runs local OCR in this browser. Scanned bank tables stay review-only unless their row structure is clear."
-    : "Runs OCR in this browser only. Form 16A requires the original digital PDF; scanned copies are identified but not parsed.";
+    : "Runs OCR in this browser only. Forms 16A, 27A and 26Q receipts require original digital PDFs; scanned copies are identified but not parsed.";
   fileTags = {};
   consolidated = []; dashboard = []; reconciliation = []; parseErrors = []; reviews = [];
   resultsTab.hidden = true;
@@ -745,7 +755,12 @@ async function runLocalOcr(files) {
         if (stopAfterFirstPage) {
           const skipped = Math.max(0, pdfDocument.numPages - 1);
           if (probe.ocr_policy === "native_only") {
-            log(`  [OCR] Scanned Form 16A identified from page 1; skipped ${skipped} remaining page(s). Use the original digital PDF.`);
+            const label = ({
+              Certificate: "Form 16A",
+              "Form 27A": "Form 27A",
+              "Form 26Q Receipt": "Form 26Q receipt",
+            })[probe.doc_kind] || "TDS form";
+            log(`  [OCR] Scanned ${label} identified from page 1; skipped ${skipped} remaining page(s). Use the original digital PDF.`);
           } else {
             log(`  [OCR] Scanned Shipping Bill identified from page 1; skipped ${skipped} remaining page(s).`);
           }
@@ -1235,8 +1250,28 @@ function renderReconciliation() {
   document.getElementById("reconCount").textContent =
     `${matched}/${rows.length} matched`;
 
+  const statementRows = rows.filter((r) => r.Check === "Form 27A vs Form 26Q");
+  const amountRows = rows.filter((r) => r.Check !== "Form 27A vs Form 26Q");
+  const tables = [];
+  if (statementRows.length) {
+    const statementHead = ["Check", "TAN", "Return", "27A period", "26Q period", "Status"];
+    const statementBody = statementRows.map((r) => {
+      const cls = r.Status === "Matched" ? "ok" : "error";
+      const left = [r["Form 27A Quarter"], r["Form 27A Assessment Year"]].filter(Boolean).join(" / ") || "—";
+      const right = [r["Form 26Q Quarter"], r["Form 26Q Assessment Year"]].filter(Boolean).join(" / ") || "—";
+      return `<tr>
+        <td>${typeCell(r.ReturnType, r.DocKind)}</td>
+        <td class="ell ref" title="${esc(r.EntityID)}">${esc(r.EntityID || "—")}</td>
+        <td>${esc(r["Return Form"] || "—")}</td>
+        <td title="${esc(r["Form 27A File"] || "")}">${esc(left)}</td>
+        <td title="${esc(r["Form 26Q File"] || "")}">${esc(right)}</td>
+        <td><span class="pill ${cls}">${esc(r.Status)}</span></td></tr>`;
+    }).join("");
+    tables.push(`<table class="tbl"><thead><tr>${tableHeaders(statementHead)}</tr></thead><tbody>${statementBody}</tbody></table>`);
+  }
+
   const head = ["Head", "Period", "Docs", "Declared ₹", "Challan ₹", "Payment ₹", "Δ", "Status"];
-  const body = rows.map((r) => {
+  const body = amountRows.map((r) => {
     const cls = r.Status === "Matched" ? "ok" : "error";
     return `<tr>
       <td>${typeCell(r.ReturnType, r.DocKind)}</td>
@@ -1248,8 +1283,10 @@ function renderReconciliation() {
       <td class="num ${Number(r.Delta) ? "err" : ""}">${r.Delta ? money(r.Delta) : "—"}</td>
       <td><span class="pill ${cls}">${esc(r.Status)}</span></td></tr>`;
   }).join("");
-  el.innerHTML =
-    `<table class="tbl"><thead><tr>${tableHeaders(head, [2, 3, 4, 5, 6])}</tr></thead><tbody>${body}</tbody></table>`;
+  if (amountRows.length) {
+    tables.push(`<table class="tbl"><thead><tr>${tableHeaders(head, [2, 3, 4, 5, 6])}</tr></thead><tbody>${body}</tbody></table>`);
+  }
+  el.innerHTML = tables.join("");
 }
 
 document.getElementById("flaggedOnly").addEventListener("change", renderRecords);

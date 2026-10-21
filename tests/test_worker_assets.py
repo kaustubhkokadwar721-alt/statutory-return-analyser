@@ -49,16 +49,21 @@ class WorkerAssetTests(unittest.TestCase):
 
         self.assertIn('<li class="type">TDS Challan</li>', index)
         self.assertIn('>Form 16A</li>', index)
-        self.assertIn("any mix of the ten types", index)
-        self.assertIn("Form 16A needs the original digital PDF", index)
+        self.assertIn('>Form 27A</li>', index)
+        self.assertIn('>Form 26Q Receipt</li>', index)
+        self.assertIn("any mix of the twelve types", index)
+        self.assertIn("TDS forms need original digital PDFs", index)
         self.assertIn('label: "Form 16A"', app)
+        self.assertIn('label: "Form 27A"', app)
+        self.assertIn('label: "Form 26Q Receipt"', app)
         self.assertIn('NativeTextRequired: "Original digital PDF required"', app)
 
     def test_scanned_form16a_stops_after_identification(self):
         app = (WEB / "app.js").read_text(encoding="utf-8")
 
         self.assertIn('["identify_then_skip", "native_only"].includes(probe.ocr_policy)', app)
-        self.assertIn("Scanned Form 16A identified from page 1", app)
+        self.assertIn('Certificate: "Form 16A"', app)
+        self.assertIn("Scanned ${label} identified from page 1", app)
 
 
 if __name__ == "__main__":

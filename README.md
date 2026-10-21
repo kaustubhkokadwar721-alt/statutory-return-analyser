@@ -57,7 +57,8 @@ shows **OK** when its own arithmetic ties out. Scanned (image-only) shipping bil
 skipped, even after local OCR identifies them, because their tables and claim values
 cannot be verified safely.
 
-Form 16A support is native-PDF only: it extracts the certificate parties and period,
+Form 16A support is native-PDF only: it splits concatenated quarterly bundles into
+individual certificates, then extracts each certificate's parties and period,
 payment lines, quarterly TDS summary, book-adjustment/challan deposits, verification,
 and serial/amount/date controls. Image-only or OCR-derived Form 16A files are rejected
 because OCR cannot preserve the ruled financial tables reliably.

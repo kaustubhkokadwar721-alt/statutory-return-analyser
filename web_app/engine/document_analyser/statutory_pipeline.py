@@ -22,13 +22,14 @@ from .shipping_bill import (
     parse_shipping_bill, sb_detail_rows, sb_item_rows,
 )
 from .audit import audit_record, classify_document, preflight_pdf
-from .handler_registry import REGISTERED_HANDLERS, run_registered
+from .handler_registry import REGISTERED_HANDLERS, run_registered_many
 from .ocr import OCRTextPdf, read_ocr_sidecar
 
 
 DETAIL_KEYS = (
     "GSTR1", "ESIC", "PF", "PTRC", "TDS", "TDS16A_Payments",
     "TDS16A_Deposits", "TDS16A_Checks", "TDS16A_Exceptions",
+    "TDS27A_Checks", "TDS26Q_Checks",
     "SB", "EBRC", "EWB",
 )
 
@@ -98,7 +99,7 @@ def _consolidated_row(res: dict, fname: str, flags_list: list, status: str | Non
         "FilingDate":    res.get("FilingDate", None),
         "SourceFile":    fname,
     }
-    for field in ("CounterpartyID", "CounterpartyName", "Quarter"):
+    for field in ("CounterpartyID", "CounterpartyName", "Quarter", "Assessment Year", "Return Form"):
         if field in res:
             row[field] = res[field]
     return row
@@ -115,6 +116,61 @@ RECON_ROLES = {
 }
 
 
+def _tds_statement_reconciliation(records: list) -> list:
+    """Compare Form 27A with Form 26Q only within the same TAN and return form."""
+    forms = [record for record in records if record.get("DocKind") == "Form 27A"]
+    receipts = [record for record in records if record.get("DocKind") == "Form 26Q Receipt"]
+    rows = []
+
+    def add_pair(left, right, status):
+        source_records = [record for record in (left, right) if record]
+        if status != "Matched":
+            for record in source_records:
+                tag = "TDS_RETURN_PERIOD_MISMATCH"
+                record["Flags"] = f'{record.get("Flags", "")}; {tag}'.strip("; ")
+                if record.get("Status") == "OK":
+                    record["Status"] = "Review"
+        rows.append({
+            "ReturnType": "TDS", "DocKind": "Statement Match",
+            "Check": "Form 27A vs Form 26Q",
+            "EntityID": (left or right).get("EntityID"),
+            "Return Form": (left or right).get("Return Form"),
+            "PeriodDate": (left or right).get("PeriodDate"),
+            "Docs": len(source_records),
+            "Form 27A Quarter": left.get("Quarter") if left else None,
+            "Form 27A Assessment Year": left.get("Assessment Year") if left else None,
+            "Form 27A File": left.get("SourceFile") if left else None,
+            "Form 26Q Quarter": right.get("Quarter") if right else None,
+            "Form 26Q Assessment Year": right.get("Assessment Year") if right else None,
+            "Form 26Q File": right.get("SourceFile") if right else None,
+            "Status": status,
+        })
+
+    keys = {(record.get("EntityID"), record.get("Return Form")) for record in forms}
+    keys &= {(record.get("EntityID"), record.get("Return Form")) for record in receipts}
+    for entity_id, return_form in sorted(keys, key=lambda value: tuple(str(item) for item in value)):
+        left_group = [record for record in forms if (record.get("EntityID"), record.get("Return Form")) == (entity_id, return_form)]
+        right_group = [record for record in receipts if (record.get("EntityID"), record.get("Return Form")) == (entity_id, return_form)]
+        unused = list(right_group)
+        unmatched_left = []
+        for left in left_group:
+            match = next((right for right in unused if (
+                right.get("Quarter"), right.get("Assessment Year")
+            ) == (left.get("Quarter"), left.get("Assessment Year"))), None)
+            if match:
+                unused.remove(match)
+                add_pair(left, match, "Matched")
+            else:
+                unmatched_left.append(left)
+        for index in range(max(len(unmatched_left), len(unused))):
+            add_pair(
+                unmatched_left[index] if index < len(unmatched_left) else None,
+                unused[index] if index < len(unused) else None,
+                "Mismatch",
+            )
+    return rows
+
+
 def _reconcile(records: list) -> list:
     """Tie out each period's declared liability against what settled it.
 
@@ -125,18 +181,15 @@ def _reconcile(records: list) -> list:
     df = pd.DataFrame(records)
     if df.empty or "DocKind" not in df.columns:
         return []
-    nkinds = df.groupby("ReturnType")["DocKind"].nunique()
-    multi = set(nkinds[nkinds > 1].index)
-    if not multi:
-        return []
-
-    sub = df[df["ReturnType"].isin(multi)].copy()
+    sub = df[df["ReturnType"].isin(RECON_ROLES)].copy()
+    recon = []
+    if sub.empty:
+        return _tds_statement_reconciliation(records)
     # A document whose period could not be parsed must get its own bucket — never
     # pool it with other undated docs, or we'd fabricate a cross-period mismatch.
     sub["_gkey"] = sub["PeriodDate"].where(
         sub["PeriodDate"].notna(), "~undated~" + sub["SourceFile"].astype(str))
 
-    recon = []
     for (head, ent, gkey), g in sub.groupby(["ReturnType", "EntityID", "_gkey"], dropna=False):
         def amt(kind):
             return float(g.loc[g["DocKind"] == kind, "PrimaryAmount"].fillna(0).sum())
@@ -176,7 +229,7 @@ def _reconcile(records: list) -> list:
                     rec["Flags"] = f'{rec["Flags"]}; {tag}'.strip("; ") if rec.get("Flags") else tag
                     if rec.get("Status") == "OK":
                         rec["Status"] = "Review"
-    return recon
+    return recon + _tds_statement_reconciliation(records)
 
 
 def _json_records(df) -> list:
@@ -594,20 +647,24 @@ def run_unified_pipeline(
 
                 # ── PF (Challan / ECR-Return / Arrears / Payment) ─────────
                 elif return_type in REGISTERED_HANDLERS:
-                    record, detail = run_registered(
+                    for record, detail in run_registered_many(
                         return_type, parse_pdf, fname, doc_kind, _consolidated_row
-                    )
-                    records.append(record)
-                    if return_type == "TDS" and doc_kind == "Certificate":
-                        for target, field in (
-                            ("TDS16A_Payments", "Payments"),
-                            ("TDS16A_Deposits", "Deposits"),
-                            ("TDS16A_Checks", "Validation Checks"),
-                            ("TDS16A_Exceptions", "Exceptions"),
-                        ):
-                            raw_details[target].extend(detail.pop(field, []) or [])
-                        detail["Validation Flags"] = "; ".join(detail.get("Validation Flags") or [])
-                    raw_details[return_type].append(detail)
+                    ):
+                        records.append(record)
+                        if return_type == "TDS" and doc_kind == "Certificate":
+                            for target, field in (
+                                ("TDS16A_Payments", "Payments"),
+                                ("TDS16A_Deposits", "Deposits"),
+                                ("TDS16A_Checks", "Validation Checks"),
+                                ("TDS16A_Exceptions", "Exceptions"),
+                            ):
+                                raw_details[target].extend(detail.pop(field, []) or [])
+                            detail["Validation Flags"] = "; ".join(detail.get("Validation Flags") or [])
+                        elif return_type == "TDS" and doc_kind in {"Form 27A", "Form 26Q Receipt"}:
+                            target = "TDS27A_Checks" if doc_kind == "Form 27A" else "TDS26Q_Checks"
+                            raw_details[target].extend(detail.pop("Validation Checks", []) or [])
+                            detail["Validation Flags"] = "; ".join(detail.get("Validation Flags") or [])
+                        raw_details[return_type].append(detail)
 
                 # ── PTRC (FORM_IIIB Return / MTR-6 Challan) ────────────────
                 # ── TDS ───────────────────────────────────────────────────

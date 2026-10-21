@@ -9,7 +9,8 @@ from .compliance_parsers import (
     parse_ebrc, parse_ewb, parse_pf, parse_pf_arrears, parse_pf_ecr,
     parse_pf_payment, parse_ptrc, parse_ptrc_challan, parse_tds,
 )
-from .form16a import parse_form16a
+from .form16a import parse_form16a, parse_form16a_certificates
+from .form27a import parse_form26q_receipt, parse_form27a
 
 
 @dataclass(frozen=True)
@@ -57,13 +58,18 @@ def _parse_ptrc(pdf, fname: str, doc_kind: str) -> dict:
 
 
 def _parse_tds(pdf, fname: str, doc_kind: str) -> dict:
-    result = parse_form16a(pdf, fname) if doc_kind == "Certificate" else parse_tds(pdf, fname)
+    parsers = {
+        "Certificate": parse_form16a,
+        "Form 27A": parse_form27a,
+        "Form 26Q Receipt": parse_form26q_receipt,
+    }
+    result = parsers.get(doc_kind, parse_tds)(pdf, fname)
     result["PrimaryAmount"] = result.get("PrimaryAmount", result.get("Total Amount Paid", 0))
     return result
 
 
 def _validate_tds(result: dict) -> list[str]:
-    if result.get("DocKind") == "Certificate":
+    if result.get("DocKind") in {"Certificate", "Form 27A", "Form 26Q Receipt"}:
         return list(result.get("Validation Flags") or [])
 
     flags = []
@@ -100,3 +106,19 @@ def run_registered(return_type: str, pdf, fname: str, doc_kind: str, make_row: C
     result = handler.parser(pdf, fname, doc_kind)
     result["SourceFile"] = fname
     return make_row(result, fname, handler.validator(result)), result
+
+
+def run_registered_many(return_type: str, pdf, fname: str, doc_kind: str, make_row: Callable) -> list[tuple[dict, dict]]:
+    """Run one registered form, or every Form 16A certificate in a bundled PDF."""
+    handler = REGISTERED_HANDLERS[return_type]
+    results = (
+        parse_form16a_certificates(pdf, fname)
+        if return_type == "TDS" and doc_kind == "Certificate"
+        else [handler.parser(pdf, fname, doc_kind)]
+    )
+    output = []
+    for result in results:
+        result["PrimaryAmount"] = result.get("PrimaryAmount", result.get("Total Amount Paid", 0))
+        result["SourceFile"] = fname
+        output.append((make_row(result, fname, handler.validator(result)), result))
+    return output
