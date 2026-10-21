@@ -9,7 +9,7 @@ from .compliance_parsers import (
     parse_ebrc, parse_ewb, parse_pf, parse_pf_arrears, parse_pf_ecr,
     parse_pf_payment, parse_ptrc, parse_ptrc_challan, parse_tds,
 )
-from .form16a import parse_form16a
+from .form16a import parse_form16a, parse_form16a_certificates
 
 
 @dataclass(frozen=True)
@@ -100,3 +100,19 @@ def run_registered(return_type: str, pdf, fname: str, doc_kind: str, make_row: C
     result = handler.parser(pdf, fname, doc_kind)
     result["SourceFile"] = fname
     return make_row(result, fname, handler.validator(result)), result
+
+
+def run_registered_many(return_type: str, pdf, fname: str, doc_kind: str, make_row: Callable) -> list[tuple[dict, dict]]:
+    """Run one registered form, or every Form 16A certificate in a bundled PDF."""
+    handler = REGISTERED_HANDLERS[return_type]
+    results = (
+        parse_form16a_certificates(pdf, fname)
+        if return_type == "TDS" and doc_kind == "Certificate"
+        else [handler.parser(pdf, fname, doc_kind)]
+    )
+    output = []
+    for result in results:
+        result["PrimaryAmount"] = result.get("PrimaryAmount", result.get("Total Amount Paid", 0))
+        result["SourceFile"] = fname
+        output.append((make_row(result, fname, handler.validator(result)), result))
+    return output

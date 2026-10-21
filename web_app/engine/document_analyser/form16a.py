@@ -21,6 +21,12 @@ import pandas as pd
 _PAN_RE = re.compile(r"^[A-Z]{5}\d{4}[A-Z]$")
 _TAN_RE = re.compile(r"^[A-Z]{4}\d{5}[A-Z]$")
 _DATE_FORMATS = ("%d-%m-%Y", "%d/%m/%Y", "%d-%b-%Y", "%d/%b/%Y", "%d %b %Y")
+_FORM16A_RE = re.compile(r"FORM\s+NO\.?\s*16A\b", re.IGNORECASE)
+
+
+class _PageGroup:
+    def __init__(self, pages):
+        self.pages = pages
 
 
 def _cell(value) -> str:
@@ -393,3 +399,21 @@ def parse_form16a(pdf, fname: str) -> dict:
         "Payments": payment_rows, "Deposits": deposit_rows,
         "Validation Checks": check_rows, "Exceptions": exceptions,
     }
+
+
+def parse_form16a_certificates(pdf, fname: str) -> list[dict]:
+    """Parse every certificate in a PDF that may contain a concatenated bundle."""
+    groups: list[list] = []
+    current: list = []
+    current_has_title = False
+    for page in pdf.pages:
+        has_title = bool(_FORM16A_RE.search(page.extract_text() or ""))
+        if has_title and current_has_title:
+            groups.append(current)
+            current = []
+            current_has_title = False
+        current.append(page)
+        current_has_title = current_has_title or has_title
+    if current:
+        groups.append(current)
+    return [parse_form16a(_PageGroup(group), fname) for group in groups]

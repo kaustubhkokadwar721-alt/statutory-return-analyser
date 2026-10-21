@@ -22,7 +22,7 @@ from .shipping_bill import (
     parse_shipping_bill, sb_detail_rows, sb_item_rows,
 )
 from .audit import audit_record, classify_document, preflight_pdf
-from .handler_registry import REGISTERED_HANDLERS, run_registered
+from .handler_registry import REGISTERED_HANDLERS, run_registered_many
 from .ocr import OCRTextPdf, read_ocr_sidecar
 
 
@@ -594,20 +594,20 @@ def run_unified_pipeline(
 
                 # ── PF (Challan / ECR-Return / Arrears / Payment) ─────────
                 elif return_type in REGISTERED_HANDLERS:
-                    record, detail = run_registered(
+                    for record, detail in run_registered_many(
                         return_type, parse_pdf, fname, doc_kind, _consolidated_row
-                    )
-                    records.append(record)
-                    if return_type == "TDS" and doc_kind == "Certificate":
-                        for target, field in (
-                            ("TDS16A_Payments", "Payments"),
-                            ("TDS16A_Deposits", "Deposits"),
-                            ("TDS16A_Checks", "Validation Checks"),
-                            ("TDS16A_Exceptions", "Exceptions"),
-                        ):
-                            raw_details[target].extend(detail.pop(field, []) or [])
-                        detail["Validation Flags"] = "; ".join(detail.get("Validation Flags") or [])
-                    raw_details[return_type].append(detail)
+                    ):
+                        records.append(record)
+                        if return_type == "TDS" and doc_kind == "Certificate":
+                            for target, field in (
+                                ("TDS16A_Payments", "Payments"),
+                                ("TDS16A_Deposits", "Deposits"),
+                                ("TDS16A_Checks", "Validation Checks"),
+                                ("TDS16A_Exceptions", "Exceptions"),
+                            ):
+                                raw_details[target].extend(detail.pop(field, []) or [])
+                            detail["Validation Flags"] = "; ".join(detail.get("Validation Flags") or [])
+                        raw_details[return_type].append(detail)
 
                 # ── PTRC (FORM_IIIB Return / MTR-6 Challan) ────────────────
                 # ── TDS ───────────────────────────────────────────────────
